@@ -13,6 +13,16 @@
       --border:#22314a;
       --muted:#9fb0c3;
       --text:#e6edf3;
+      --danger:#ffb4b4;
+      --dangerBorder:#5a1d1d;
+      --dangerBg:rgba(55,15,15,.55);
+      --ok:#b7f7c3;
+      --okBorder:#204b2c;
+      --okBg:rgba(16,41,22,.55);
+      --warn:#ffe29a;
+      --warnBorder:#4a3b12;
+      --warnBg:rgba(50,40,12,.55);
+      --accent:#66a3ff;
     }
     body{
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -21,7 +31,7 @@
       margin:0;
       padding:40px 18px;
     }
-    .wrap{ max-width: 1060px; margin:0 auto; }
+    .wrap{ max-width: 1140px; margin:0 auto; }
     h1{ margin:0 0 18px; font-size: 36px; letter-spacing: .2px; }
     .card{
       background: linear-gradient(180deg, rgba(15,23,42,.95), rgba(7,12,24,.95));
@@ -51,7 +61,7 @@
       flex-wrap:wrap;
       justify-content:flex-end;
     }
-    select, button{
+    select, button, input{
       background:#111826;
       color: var(--text);
       border:1px solid #243043;
@@ -60,8 +70,11 @@
       font-size: 13px;
       outline:none;
     }
+    input{ width: 120px; }
+    input.small{ width: 86px; }
     button:hover{ border-color:#2f425f; cursor:pointer; }
     button:disabled{ opacity:.55; cursor:not-allowed; }
+
     .pill{
       padding:7px 10px;
       border-radius:999px;
@@ -71,13 +84,45 @@
       background:#0b1426;
       white-space:nowrap;
     }
-    .pill.ok{ color:#b7f7c3; border-color:#204b2c; background:rgba(16,41,22,.55); }
-    .pill.err{ color:#ffb4b4; border-color:#5a1d1d; background:rgba(55,15,15,.55); }
+    .pill.ok{ color:var(--ok); border-color:var(--okBorder); background:var(--okBg); }
+    .pill.err{ color:var(--danger); border-color:var(--dangerBorder); background:var(--dangerBg); }
+    .pill.warn{ color:var(--warn); border-color:var(--warnBorder); background:var(--warnBg); }
+
     .grid{
       display:grid;
       grid-template-columns: 1fr;
       gap: 14px;
     }
+    .chartsGrid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 940px){
+      .chartsGrid{ grid-template-columns: 1fr; }
+    }
+    .chartCard{
+      border:1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(7,12,24,.35);
+    }
+    .chartHead{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom: 8px;
+    }
+    .chartTitle{
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .chartMeta{
+      font-size: 12px;
+      color: var(--muted);
+    }
+
     textarea{
       width:100%;
       min-height: 92px;
@@ -111,39 +156,136 @@
       word-break: break-word;
     }
     .msg.ai .bubble{ background: rgba(14,24,44,.75); }
+
+    /* Progress bar (indeterminate) */
+    .thinkingWrap{
+      margin-top: 10px;
+      border:1px solid var(--border);
+      border-radius: 12px;
+      overflow:hidden;
+      background: rgba(7,12,24,.55);
+    }
+    .thinkingBar{
+      height: 10px;
+      width: 100%;
+      position: relative;
+      background: rgba(102,163,255,.10);
+    }
+    .thinkingBar::before{
+      content:"";
+      position:absolute;
+      left:-40%;
+      top:0;
+      height:100%;
+      width:40%;
+      background: rgba(102,163,255,.55);
+      filter: blur(.2px);
+      animation: indet 1.1s infinite linear;
+    }
+    @keyframes indet{
+      0%{ left:-40%; }
+      100%{ left:100%; }
+    }
+    .thinkingText{
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
+    }
     .hint{ color: var(--muted); font-size: 12px; margin-top: 8px; }
     canvas{ width:100% !important; }
+
+    .divider{
+      height:1px;
+      background: rgba(34,49,74,.7);
+      margin: 10px 0;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>SpaceWatch</h1>
 
+    <!-- METRICS DASHBOARD -->
     <div class="card">
       <div class="row">
-        <div class="title">Bucket metrics over time (derived from snapshots)</div>
+        <div class="title">Bucket metrics over time (grid view)</div>
         <div class="controls">
           <select id="bucketSel" title="Source bucket"></select>
-          <select id="metricSel" title="Metric">
-            <option value="storage">Storage (source_bytes + logs_bytes)</option>
-            <option value="requests">Requests (total + methods)</option>
-            <option value="errors">Errors (4xx + 5xx)</option>
-            <option value="bandwidth">Bandwidth (bytes_sent)</option>
-            <option value="unique_ips">Unique IPs</option>
-			<option value="top_ips">Top IPs (bar chart)</option>
-          </select>
+
+          <!-- Threshold / alert controls -->
+          <input id="thresholdTb" class="small" type="number" step="0.1" min="0" placeholder="1.0" title="Threshold (TB)" />
+          <input id="alertPct" class="small" type="number" step="1" min="1" max="100" placeholder="90" title="Alert at % of threshold" />
+          <button id="saveThresholdBtn" title="Save threshold for this bucket">Save</button>
+
           <button id="refreshBtn">Refresh</button>
+          <button id="notifBtn" title="Enable browser notifications (optional)">Enable Alerts</button>
+
           <div class="pill" id="chartStatus">Loading…</div>
+          <div class="pill" id="alertPill" style="display:none;">Alert</div>
         </div>
       </div>
 
-      <canvas id="metricsChart" height="140"></canvas>
-	  <img id="ipBarImg" style="display:none; width:100%; border-radius:12px; border:1px solid #22314a; margin-top:10px;" />
+      <div class="chartsGrid">
+        <div class="chartCard">
+          <div class="chartHead">
+            <div class="chartTitle">Storage</div>
+            <div class="chartMeta" id="storageMeta">—</div>
+          </div>
+          <canvas id="chart_storage" height="130"></canvas>
+        </div>
+
+        <div class="chartCard">
+          <div class="chartHead">
+            <div class="chartTitle">Requests</div>
+            <div class="chartMeta" id="requestsMeta">—</div>
+          </div>
+          <canvas id="chart_requests" height="130"></canvas>
+        </div>
+
+        <div class="chartCard">
+          <div class="chartHead">
+            <div class="chartTitle">Errors (4xx/5xx)</div>
+            <div class="chartMeta" id="errorsMeta">—</div>
+          </div>
+          <canvas id="chart_errors" height="130"></canvas>
+        </div>
+
+        <div class="chartCard">
+          <div class="chartHead">
+            <div class="chartTitle">Bandwidth (bytes_sent)</div>
+            <div class="chartMeta" id="bandwidthMeta">—</div>
+          </div>
+          <canvas id="chart_bandwidth" height="130"></canvas>
+        </div>
+
+        <div class="chartCard">
+          <div class="chartHead">
+            <div class="chartTitle">Unique IPs</div>
+            <div class="chartMeta" id="unique_ipsMeta">—</div>
+          </div>
+          <canvas id="chart_unique_ips" height="130"></canvas>
+        </div>
+
+        <div class="chartCard">
+          <div class="chartHead">
+            <div class="chartTitle">Top IPs</div>
+            <div class="chartMeta" id="top_ipsMeta">—</div>
+          </div>
+          <img id="ipBarImg" style="width:100%; border-radius:12px; border:1px solid #22314a;" />
+        </div>
+      </div>
+
       <div class="hint">
-        Tip: request/bandwidth/error lines show only after your newer snapshots include those fields.
+        Storage alert checks the latest point: <b>(source_bytes + logs_bytes)</b> vs your threshold.
+        Charts show only fields present in your snapshots.
       </div>
     </div>
 
+    <!-- CHAT -->
     <div class="card">
       <div class="row">
         <div class="title">Ask the assistant about your Spaces</div>
@@ -154,6 +296,16 @@
 
       <div class="grid">
         <div class="chatlog" id="chat"></div>
+
+        <!-- Thinking indicator (hidden until chat request starts) -->
+        <div id="thinking" class="thinkingWrap" style="display:none;">
+          <div class="thinkingBar"></div>
+          <div class="thinkingText">
+            <span>AI is looking for an answer…</span>
+            <span id="thinkingDetail">Calling tools / reasoning</span>
+          </div>
+        </div>
+
         <textarea id="input" placeholder="Try: show access logs for testbucket11&#10;Try: show me the largest files in testbucket11"></textarea>
       </div>
 
@@ -171,8 +323,7 @@
   // =========================
   // CONFIG
   // =========================
-  // If you enabled APP_API_KEY in the backend, set it here (or leave blank).
-  const APP_API_KEY = ""; // e.g. "my-secret-key"
+  const APP_API_KEY = ""; // optional: backend APP_API_KEY
   const BASE_URL = "";    // same origin
 
   function getSessionId() {
@@ -200,10 +351,21 @@
   const chat = document.getElementById("chat");
   const input = document.getElementById("input");
   const btn = document.getElementById("sendBtn");
+
   const chartStatus = document.getElementById("chartStatus");
+  const alertPill = document.getElementById("alertPill");
   const bucketSel = document.getElementById("bucketSel");
-  const metricSel = document.getElementById("metricSel");
   const refreshBtn = document.getElementById("refreshBtn");
+
+  const thresholdTbEl = document.getElementById("thresholdTb");
+  const alertPctEl = document.getElementById("alertPct");
+  const saveThresholdBtn = document.getElementById("saveThresholdBtn");
+  const notifBtn = document.getElementById("notifBtn");
+
+  const thinking = document.getElementById("thinking");
+  const thinkingDetail = document.getElementById("thinkingDetail");
+
+  const ipBarImg = document.getElementById("ipBarImg");
 
   function escapeHtml(s) {
     return String(s)
@@ -223,6 +385,7 @@
     `;
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
+    return div;
   }
 
   function bytesToHuman(n) {
@@ -239,20 +402,103 @@
   }
 
   function setStatus(kind, text) {
-    chartStatus.classList.remove("ok","err");
+    chartStatus.classList.remove("ok","err","warn");
     if (kind) chartStatus.classList.add(kind);
     chartStatus.textContent = text;
   }
 
+  function showAlert(kind, text) {
+    alertPill.style.display = "inline-block";
+    alertPill.classList.remove("ok","err","warn");
+    if (kind) alertPill.classList.add(kind);
+    alertPill.textContent = text;
+  }
+
+  function hideAlert() {
+    alertPill.style.display = "none";
+    alertPill.classList.remove("ok","err","warn");
+    alertPill.textContent = "Alert";
+  }
+
   // =========================
-  // Chart
+  // Threshold persistence (per bucket)
   // =========================
-  let metricsChart = null;
+  function thresholdKey(bucket){ return `spacewatch_threshold_${bucket}`; }
+
+  function loadThresholdForBucket(bucket) {
+    // Default example: 1TB threshold, alert at 90%
+    const fallback = { thresholdTb: 1.0, alertPct: 90 };
+    try {
+      const raw = localStorage.getItem(thresholdKey(bucket));
+      if (!raw) return fallback;
+      const obj = JSON.parse(raw);
+      const t = Number(obj.thresholdTb);
+      const p = Number(obj.alertPct);
+      return {
+        thresholdTb: Number.isFinite(t) && t > 0 ? t : fallback.thresholdTb,
+        alertPct: Number.isFinite(p) && p > 0 && p <= 100 ? p : fallback.alertPct
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  function saveThresholdForBucket(bucket, thresholdTb, alertPct) {
+    const t = Number(thresholdTb);
+    const p = Number(alertPct);
+    const obj = {
+      thresholdTb: Number.isFinite(t) && t > 0 ? t : 1.0,
+      alertPct: Number.isFinite(p) && p > 0 && p <= 100 ? p : 90
+    };
+    localStorage.setItem(thresholdKey(bucket), JSON.stringify(obj));
+    return obj;
+  }
+
+  function applyThresholdUi(bucket) {
+    const conf = loadThresholdForBucket(bucket);
+    thresholdTbEl.value = conf.thresholdTb;
+    alertPctEl.value = conf.alertPct;
+  }
+
+  // =========================
+  // Notifications (optional)
+  // =========================
+  let notificationsEnabled = false;
+
+  async function enableNotifications() {
+    if (!("Notification" in window)) {
+      add("ai", "Browser notifications are not supported here.");
+      return;
+    }
+    if (Notification.permission === "granted") {
+      notificationsEnabled = true;
+      notifBtn.textContent = "Alerts Enabled";
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm === "granted") {
+      notificationsEnabled = true;
+      notifBtn.textContent = "Alerts Enabled";
+    } else {
+      notificationsEnabled = false;
+      notifBtn.textContent = "Enable Alerts";
+    }
+  }
+
+  function maybeNotify(title, body) {
+    if (!notificationsEnabled) return;
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    try { new Notification(title, { body }); } catch {}
+  }
+
+  // =========================
+  // Chart.js helpers
+  // =========================
+  const charts = {}; // metricMode -> Chart instance
 
   function yFormatterForMetric(metricMode) {
-    if (metricMode === "storage" || metricMode === "bandwidth") {
-      return (v) => bytesToHuman(v);
-    }
+    if (metricMode === "storage" || metricMode === "bandwidth") return (v) => bytesToHuman(v);
     return (v) => numberToHuman(v);
   }
 
@@ -276,7 +522,6 @@
         ]
       };
     }
-
     if (metricMode === "requests") {
       return {
         labels,
@@ -285,73 +530,61 @@
           { label: "GET", data: getSeries("requests_get"), borderWidth: 2, borderDash: [6,6] },
           { label: "PUT", data: getSeries("requests_put"), borderWidth: 2, borderDash: [6,6] },
           { label: "HEAD", data: getSeries("requests_head"), borderWidth: 2, borderDash: [6,6] },
-          { label: "DELETE", data: getSeries("requests_delete"), borderWidth: 2, borderDash: [6,6] },
+          { label: "DELETE", data: getSeries("requests_delete"), borderWidth: 2, borderDash: [6,6] }
         ]
       };
     }
-
     if (metricMode === "errors") {
       return {
         labels,
         datasets: [
           { label: "status_4xx", data: getSeries("status_4xx"), borderWidth: 2 },
-          { label: "status_5xx", data: getSeries("status_5xx"), borderWidth: 2, borderDash: [6,6] },
+          { label: "status_5xx", data: getSeries("status_5xx"), borderWidth: 2, borderDash: [6,6] }
         ]
       };
     }
-
     if (metricMode === "bandwidth") {
-      return {
-        labels,
-        datasets: [
-          { label: "bytes_sent", data: getSeries("bytes_sent"), borderWidth: 2 }
-        ]
-      };
+      return { labels, datasets: [{ label: "bytes_sent", data: getSeries("bytes_sent"), borderWidth: 2 }] };
     }
-
-    return {
-      labels,
-      datasets: [
-        { label: "unique_ips", data: getSeries("unique_ips"), borderWidth: 2 }
-      ]
-    };
+    // unique_ips
+    return { labels, datasets: [{ label: "unique_ips", data: getSeries("unique_ips"), borderWidth: 2 }] };
   }
 
-  function renderChart(points, sourceBucket, metricMode) {
-    const ctx = document.getElementById("metricsChart").getContext("2d");
+  function renderChart(metricMode, canvasId, points, sourceBucket) {
+    const ctx = document.getElementById(canvasId).getContext("2d");
     const data = buildDatasets(points, sourceBucket, metricMode);
-
     const yTickFmt = yFormatterForMetric(metricMode);
     const tipFmt = tooltipFormatterForMetric(metricMode);
 
-    if (!metricsChart) {
-	metricsChart = new Chart(ctx, {
-	  type: "line",
-	  data,
-	  options: {
-		responsive: true,
-		interaction: { mode: "nearest", intersect: false },
-		plugins: {
-		  tooltip: {
-			callbacks: { label: tipFmt }
-		  },
-		  zoom: {
-			zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
-			pan: { enabled: true, mode: "x" }
-		  }
-		},
-		scales: {
-		  y: { ticks: { callback: yTickFmt } }
-		}
-	  }
-	});
+    if (!charts[metricMode]) {
+      charts[metricMode] = new Chart(ctx, {
+        type: "line",
+        data,
+        options: {
+          responsive: true,
+          interaction: { mode: "nearest", intersect: false },
+          plugins: {
+            tooltip: { callbacks: { label: tipFmt } },
+            zoom: {
+              zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+              pan: { enabled: true, mode: "x" }
+            }
+          },
+          scales: { y: { ticks: { callback: yTickFmt } } }
+        }
+      });
     } else {
-      metricsChart.data.labels = data.labels;
-      metricsChart.data.datasets = data.datasets;
-      metricsChart.options.scales.y.ticks.callback = yTickFmt;
-      metricsChart.options.plugins.tooltip.callbacks.label = tipFmt;
-      metricsChart.update();
+      charts[metricMode].data.labels = data.labels;
+      charts[metricMode].data.datasets = data.datasets;
+      charts[metricMode].options.scales.y.ticks.callback = yTickFmt;
+      charts[metricMode].options.plugins.tooltip.callbacks.label = tipFmt;
+      charts[metricMode].update();
     }
+  }
+
+  function setMeta(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text || "—";
   }
 
   // =========================
@@ -368,7 +601,7 @@
     const buckets = Array.isArray(data.buckets) ? data.buckets : [];
     if (!buckets.length) throw new Error("No buckets returned from /tools/buckets");
 
-    // Put non-log buckets first (best effort)
+    // Non-log buckets first (best-effort)
     buckets.sort((a,b) => {
       const al = a.toLowerCase(), bl = b.toLowerCase();
       const as = (al.includes("log") || al.includes("metrics")) ? 1 : 0;
@@ -386,6 +619,7 @@
     const saved = localStorage.getItem("spacewatch_bucket");
     if (saved && buckets.includes(saved)) bucketSel.value = saved;
 
+    applyThresholdUi(bucketSel.value);
     setStatus("ok", `Buckets: ${buckets.length}`);
   }
 
@@ -396,56 +630,111 @@
     return await r.json();
   }
 
-  async function refreshMetrics() {
-  refreshBtn.disabled = true;
-  const b = bucketSel.value;
-  const mode = metricSel.value;
-  localStorage.setItem("spacewatch_bucket", b);
-
-  const img = document.getElementById("ipBarImg");
-  const canvas = document.getElementById("metricsChart");
-
-  try {
-    setStatus(null, "Loading…");
-
-    if (mode === "top_ips") {
-      // Hide Chart.js line chart, show python-rendered image
-      canvas.style.display = "none";
-      img.style.display = "block";
-
-      // (Optional) add &limit=30 or &date_yyyy_mm_dd=2025-12-27
-      const url = `${BASE_URL}/plots/top-ips.png?source_bucket=${encodeURIComponent(b)}&limit=20`;
-
-      // cache-bust so refresh actually refreshes
-      img.src = url + `&_=${Date.now()}`;
-      setStatus("ok", `Top IPs: ${b}`);
-      return;
-    }
-
-    // Default behavior (Chart.js time series)
-    img.style.display = "none";
-    canvas.style.display = "block";
-
-    setStatus(null, "Loading metrics…");
-    const data = await loadMetricsForBucket(b);
-    const points = Array.isArray(data.points) ? data.points : [];
-    if (!points.length) {
-      setStatus("err", `No metrics for ${b}`);
-      renderChart([], b, mode);
-      return;
-    }
-    setStatus("ok", `Showing: ${b}`);
-    renderChart(points, b, mode);
-
-  } catch (e) {
-    setStatus("err", String(e.message || e));
-  } finally {
-    refreshBtn.disabled = false;
+  function latestUsedBytes(points) {
+    if (!points || !points.length) return 0;
+    const last = points[points.length - 1];
+    return Number(last.source_bytes || 0) + Number(last.logs_bytes || 0);
   }
-}
+
+  function checkThresholdAlert(bucket, points) {
+    const conf = loadThresholdForBucket(bucket);
+    const thresholdBytes = conf.thresholdTb * (1024 ** 4); // TB -> bytes (binary TB)
+    const warnAt = thresholdBytes * (conf.alertPct / 100);
+
+    const used = latestUsedBytes(points);
+    if (!thresholdBytes || thresholdBytes <= 0) {
+      hideAlert();
+      return;
+    }
+
+    const usedPct = thresholdBytes > 0 ? (used / thresholdBytes) * 100 : 0;
+    const usedHuman = bytesToHuman(used);
+    const threshHuman = bytesToHuman(thresholdBytes);
+
+    if (used >= thresholdBytes) {
+      showAlert("err", `OVER: ${usedHuman} / ${threshHuman} (${usedPct.toFixed(1)}%)`);
+      maybeNotify("SpaceWatch Alert: Threshold exceeded", `${bucket}: ${usedHuman} used (threshold ${threshHuman})`);
+      return;
+    }
+
+    if (used >= warnAt) {
+      showAlert("warn", `WARN: ${usedHuman} / ${threshHuman} (${usedPct.toFixed(1)}%)`);
+      maybeNotify("SpaceWatch Alert: Near threshold", `${bucket}: ${usedHuman} used (${usedPct.toFixed(1)}%)`);
+      return;
+    }
+
+    hideAlert();
+  }
+
+  async function refreshMetrics() {
+    refreshBtn.disabled = true;
+    const b = bucketSel.value;
+    localStorage.setItem("spacewatch_bucket", b);
+
+    try {
+      setStatus(null, "Loading metrics…");
+
+      const data = await loadMetricsForBucket(b);
+      const points = Array.isArray(data.points) ? data.points : [];
+      if (!points.length) {
+        setStatus("err", `No metrics for ${b}`);
+        // render empty charts (keeps UI consistent)
+        renderChart("storage", "chart_storage", [], b);
+        renderChart("requests", "chart_requests", [], b);
+        renderChart("errors", "chart_errors", [], b);
+        renderChart("bandwidth", "chart_bandwidth", [], b);
+        renderChart("unique_ips", "chart_unique_ips", [], b);
+        ipBarImg.src = "";
+        setMeta("storageMeta", "—");
+        setMeta("requestsMeta", "—");
+        setMeta("errorsMeta", "—");
+        setMeta("bandwidthMeta", "—");
+        setMeta("unique_ipsMeta", "—");
+        setMeta("top_ipsMeta", "—");
+        hideAlert();
+        return;
+      }
+
+      // Storage
+      renderChart("storage", "chart_storage", points, b);
+      const used = latestUsedBytes(points);
+      setMeta("storageMeta", `Latest used: ${bytesToHuman(used)}`);
+
+      // Requests
+      renderChart("requests", "chart_requests", points, b);
+      const lastReq = points[points.length - 1];
+      setMeta("requestsMeta", `Latest: ${numberToHuman(lastReq.requests_total || 0)}`);
+
+      // Errors
+      renderChart("errors", "chart_errors", points, b);
+      setMeta("errorsMeta", `Latest: 4xx=${numberToHuman(lastReq.status_4xx || 0)}  5xx=${numberToHuman(lastReq.status_5xx || 0)}`);
+
+      // Bandwidth
+      renderChart("bandwidth", "chart_bandwidth", points, b);
+      setMeta("bandwidthMeta", `Latest: ${bytesToHuman(lastReq.bytes_sent || 0)}`);
+
+      // Unique IPs
+      renderChart("unique_ips", "chart_unique_ips", points, b);
+      setMeta("unique_ipsMeta", `Latest: ${numberToHuman(lastReq.unique_ips || 0)}`);
+
+      // Top IPs image (server renders)
+      const url = `${BASE_URL}/plots/top-ips.png?source_bucket=${encodeURIComponent(b)}&limit=20&_=${Date.now()}`;
+      ipBarImg.src = url;
+      setMeta("top_ipsMeta", "Top 20 (from recent logs)");
+
+      // Threshold alerts
+      checkThresholdAlert(b, points);
+
+      setStatus("ok", `Showing: ${b}`);
+    } catch (e) {
+      setStatus("err", String(e.message || e));
+    } finally {
+      refreshBtn.disabled = false;
+    }
+  }
 
   // =========================
-  // Chat
+  // Chat (progress bar while waiting)
   // =========================
   async function send() {
     const msg = input.value.trim();
@@ -455,6 +744,11 @@
     input.value = "";
     btn.disabled = true;
 
+    // Show thinking progress
+    thinking.style.display = "block";
+    thinkingDetail.textContent = "Working…";
+    const thinkingMsg = add("ai", "Thinking…"); // placeholder bubble
+
     try {
       const r = await fetch(`${BASE_URL}/chat`, {
         method: "POST",
@@ -462,13 +756,20 @@
         body: JSON.stringify({ message: msg })
       });
 
-      const data = await r.json();
+      const data = await r.json().catch(() => ({}));
+
+      // remove placeholder, add final
+      thinkingMsg.remove();
+      thinking.style.display = "none";
+
       if (!r.ok) {
         add("ai", `Error: ${data.detail || JSON.stringify(data)}`);
       } else {
         add("ai", data.answer || JSON.stringify(data));
       }
     } catch (e) {
+      thinkingMsg.remove();
+      thinking.style.display = "none";
       add("ai", `Network error: ${e}`);
     } finally {
       btn.disabled = false;
@@ -480,9 +781,25 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
 
+  // =========================
+  // Events
+  // =========================
   refreshBtn.addEventListener("click", refreshMetrics);
-  bucketSel.addEventListener("change", refreshMetrics);
-  metricSel.addEventListener("change", refreshMetrics);
+
+  bucketSel.addEventListener("change", async () => {
+    applyThresholdUi(bucketSel.value);
+    await refreshMetrics();
+  });
+
+  saveThresholdBtn.addEventListener("click", async () => {
+    const b = bucketSel.value;
+    const conf = saveThresholdForBucket(b, thresholdTbEl.value, alertPctEl.value);
+    applyThresholdUi(b);
+    setStatus("ok", `Saved threshold for ${b}: ${conf.thresholdTb}TB @ ${conf.alertPct}%`);
+    await refreshMetrics();
+  });
+
+  notifBtn.addEventListener("click", enableNotifications);
 
   // bootstrap
   (async () => {

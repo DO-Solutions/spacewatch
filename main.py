@@ -34,6 +34,7 @@ import json
 import gzip
 import io
 import sys
+import time
 import traceback
 import asyncio
 from dataclasses import dataclass
@@ -201,6 +202,12 @@ STATS = {
     "scheduler_snapshots_ok": 0,
     "scheduler_snapshots_err": 0,
 }
+
+# ============================================================
+# TOP IPs IMAGE CACHE (performance)
+# ============================================================
+TOP_IPS_CACHE = {}   # (bucket, date, limit) -> (timestamp, png_bytes)
+TOP_IPS_TTL = 120    # seconds
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
@@ -1460,7 +1467,20 @@ def plot_top_ips_png(
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
+    
+    # -------------------------
+    # CACHE CHECK
+    # -------------------------
+    cache_key = (source_bucket, date_yyyy_mm_dd or "", int(limit))
+    now = time.time()
+    cached = TOP_IPS_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < TOP_IPS_TTL:
+        return Response(
+            content=cached[1],
+            media_type="image/png"
+        )
 
+    
     # Use log search and count IPs
     res = search_access_logs(
         source_bucket=source_bucket,
@@ -1480,7 +1500,10 @@ def plot_top_ips_png(
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=140, bbox_inches="tight")
         plt.close(fig)
-        return Response(content=buf.getvalue(), media_type="image/png")
+        png_bytes = buf.getvalue()
+        TOP_IPS_CACHE[cache_key] = (now, png_bytes)
+    
+        return Response(content=png_bytes, media_type="image/png")
 
     ips = [x[0] for x in top]
     counts = [x[1] for x in top]

@@ -70,6 +70,25 @@
       font-size: 13px;
       outline:none;
     }
+	.thresholdGroup{
+	  display:flex;
+	  gap:10px;
+	  align-items:center;
+	}
+
+	.thLabel{
+	  display:flex;
+	  flex-direction:column; /* label text above input */
+	  gap:4px;
+	  font-size:11px;
+	  color: var(--muted);
+	  line-height: 1.1;
+	}
+
+	.thLabel input{
+	  font-size:13px;
+	}
+
     input{ width: 120px; }
     input.small{ width: 86px; }
     button:hover{ border-color:#2f425f; cursor:pointer; }
@@ -217,8 +236,33 @@
           <select id="bucketSel" title="Source bucket"></select>
 
           <!-- Threshold / alert controls -->
-          <input id="thresholdTb" class="small" type="number" step="0.1" min="0" placeholder="1.0" title="Threshold (TB)" />
-          <input id="alertPct" class="small" type="number" step="1" min="1" max="100" placeholder="90" title="Alert at % of threshold" />
+			<div class="thresholdGroup">
+			  <label class="thLabel">
+				Threshold (TB)
+				<input
+				  id="thresholdTb"
+				  class="small"
+				  type="number"
+				  step="0.1"
+				  min="0"
+				  placeholder="1.0"
+				/>
+			  </label>
+
+			  <label class="thLabel">
+				Alert at (%)
+				<input
+				  id="alertPct"
+				  class="small"
+				  type="number"
+				  step="1"
+				  min="1"
+				  max="100"
+				  placeholder="90"
+				/>
+			  </label>
+			</div>
+
           <button id="saveThresholdBtn" title="Save threshold for this bucket">Save</button>
 
           <button id="refreshBtn">Refresh</button>

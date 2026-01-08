@@ -1,0 +1,1498 @@
+"""
+SpaceWatch – AI-Driven Observability Backend (Production Baseline, copy/paste)
+
+Key goals this file satisfies:
+- AI is the “driver”: user can ask anything; AI decides what tools to call.
+- Backend sits between AI agent <-> DigitalOcean Spaces.
+- Tools include: buckets, list objects, recent objects, storage summary, top largest,
+  metrics snapshots/series/sources, list/read/search .log.gz access logs, object audit timeline.
+- Backend NEVER returns tool-call JSON to the frontend; it executes tool calls internally.
+- Robust parsing: extracts the FIRST JSON object from agent output, even if the model adds text.
+- Enforces: ONE tool call per agent turn. If model returns multiple JSON objects, backend requests a retry.
+- Safe limits: rate limiting, max tool steps, max bytes, max files/lines scanned.
+
+How “last file uploaded” + “from which IP” works with this file:
+1) AI calls recent_objects(bucket=...)
+2) AI picks the most recent object key
+3) AI calls object_audit(source_bucket=..., object_key=..., methods=["PUT"])
+4) AI answers with the IP + timestamp
+
+IMPORTANT: This app can only answer questions from:
+- Spaces object listing (sizes/last_modified)
+- Access logs you store in ACCESS_LOGS_BUCKET (supports .log and .log.gz)
+- Snapshots you write (every 5 min) into METRICS_BUCKET/METRICS_PREFIX
+It cannot magically provide AWS CloudWatch / Azure Monitor without additional integrations.
+
+"""
+
+import os
+import re
+import time
+from collections import defaultdict
+from typing import Optional
+import json
+import gzip
+import io
+import sys
+import traceback
+import asyncio
+from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Dict, Any, Tuple, Set, Callable
+
+import httpx
+import boto3
+from botocore.client import Config
+from botocore.exceptions import ClientError
+
+from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from collections import Counter
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+# ============================================================
+# ENV / CONFIG
+# ============================================================
+SPACES_REGION = os.getenv("SPACES_REGION", "sgp1")
+SPACES_ENDPOINT = os.getenv("SPACES_ENDPOINT", f"https://{SPACES_REGION}.digitaloceanspaces.com")
+SPACES_KEY = os.getenv("SPACES_KEY")
+SPACES_SECRET = os.getenv("SPACES_SECRET")
+
+DO_AGENT_URL = os.getenv("DO_AGENT_URL")  # must be OpenAI-compatible chat completions endpoint
+DO_AGENT_KEY = os.getenv("DO_AGENT_KEY")
+
+ACCESS_LOGS_BUCKET = os.getenv("ACCESS_LOGS_BUCKET", "").strip()
+ACCESS_LOGS_ROOT_PREFIX = os.getenv("ACCESS_LOGS_ROOT_PREFIX", "").strip()
+
+METRICS_BUCKET = os.getenv("METRICS_BUCKET", "").strip() or ACCESS_LOGS_BUCKET or "logsbucket"
+METRICS_PREFIX = os.getenv("METRICS_PREFIX", "spacewatch-metrics/").strip()
+METRICS_GZIP = os.getenv("METRICS_GZIP", "true").lower() in {"1", "true", "yes"}
+
+# Optional: explicitly tell scheduler which source buckets to snapshot.
+# If set, scheduler does NOT need list_buckets permission.
+# Example: SCHEDULER_SOURCE_BUCKETS="prod-assets,prod-uploads"
+SCHEDULER_SOURCE_BUCKETS = [b.strip() for b in os.getenv("SCHEDULER_SOURCE_BUCKETS", "").split(",") if b.strip()]
+
+
+# Optional: protect endpoints with X-API-Key
+APP_API_KEY = os.getenv("APP_API_KEY", "").strip()
+
+# Optional fallback buckets if list_buckets() is disallowed
+FALLBACK_BUCKETS = [b.strip() for b in os.getenv("FALLBACK_BUCKETS", "").split(",") if b.strip()]
+
+# Safety limits
+MAX_LOG_BYTES = int(os.getenv("MAX_LOG_BYTES", "10485760"))  # 10MB per object read
+MAX_LOG_LINES = int(os.getenv("MAX_LOG_LINES", "300"))       # tail lines on read_log
+
+MAX_LOG_FILES_SCAN = int(os.getenv("MAX_LOG_FILES_SCAN", "50"))
+MAX_LOG_LINES_SCAN = int(os.getenv("MAX_LOG_LINES_SCAN", "50000"))
+
+MAX_LIST_OBJECTS_RETURN = int(os.getenv("MAX_LIST_OBJECTS_RETURN", "200"))
+MAX_TOP_LARGEST = int(os.getenv("MAX_TOP_LARGEST", "50"))
+
+# Rate limiting
+RATE_LIMIT_RPS = float(os.getenv("RATE_LIMIT_RPS", "2.0"))
+RATE_LIMIT_BURST = int(os.getenv("RATE_LIMIT_BURST", "10"))
+
+# Bucket cache
+BUCKET_CACHE_TTL_SEC = int(os.getenv("BUCKET_CACHE_TTL_SEC", "300"))
+
+# Agent call config
+DO_AGENT_TIMEOUT_SEC = float(os.getenv("DO_AGENT_TIMEOUT_SEC", "60"))
+DO_AGENT_RETRIES = int(os.getenv("DO_AGENT_RETRIES", "2"))
+
+# Agent tool loop
+AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "8"))
+AGENT_MAX_TOOL_BYTES = int(os.getenv("AGENT_MAX_TOOL_BYTES", "250000"))
+
+# Optional scheduler to write snapshots every 5 minutes
+ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "false").lower() in {"1", "true", "yes"}
+SNAPSHOT_EVERY_SEC = int(os.getenv("SNAPSHOT_EVERY_SEC", "300"))
+
+# Optional leader gating if you run multiple replicas
+SCHEDULER_INSTANCE_ID = os.getenv("SCHEDULER_INSTANCE_ID", "").strip()
+SCHEDULER_LEADER_ID = os.getenv("SCHEDULER_LEADER_ID", "").strip()
+
+
+if not all([SPACES_KEY, SPACES_SECRET, DO_AGENT_URL, DO_AGENT_KEY]):
+    raise RuntimeError("Missing required env vars: SPACES_KEY, SPACES_SECRET, DO_AGENT_URL, DO_AGENT_KEY")
+
+
+# ============================================================
+# CLIENTS
+# ============================================================
+s3 = boto3.client(
+    "s3",
+    region_name=SPACES_REGION,
+    endpoint_url=SPACES_ENDPOINT,
+    aws_access_key_id=SPACES_KEY,
+    aws_secret_access_key=SPACES_SECRET,
+    config=Config(signature_version="s3v4"),
+)
+
+
+# ============================================================
+# APP
+# ============================================================
+app = FastAPI(title="SpaceWatch – AI-driven Observability Backend (Prod Baseline)")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten in production
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+def home():
+    if os.path.exists("static/index.html"):
+        return FileResponse("static/index.html")
+    return {"ok": True, "message": "SpaceWatch backend running"}
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content={"detail": f"Internal Server Error: {type(exc).__name__}: {str(exc)}"})
+
+
+# ============================================================
+# MODELS
+# ============================================================
+class ChatRequest(BaseModel):
+    message: str
+
+
+# ============================================================
+# RATE LIMIT + MEMORY (in-memory)
+# ============================================================
+@dataclass
+class TokenBucket:
+    tokens: float
+    last_ts: float
+
+@dataclass
+class MemoryState:
+    last_bucket: Optional[str]
+    last_tool: Optional[str]
+    last_updated_ts: float
+
+BUCKET_BY_IP: Dict[str, TokenBucket] = {}
+MEMORY_BY_KEY: Dict[str, MemoryState] = {}
+
+STATS = {
+    "chat_requests": 0,
+    "tool_requests": 0,
+    "agent_calls": 0,
+    "agent_failures": 0,
+    "bucket_cache_refreshes": 0,
+    "scheduler_runs": 0,
+    "scheduler_snapshots_ok": 0,
+    "scheduler_snapshots_err": 0,
+}
+
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+def memory_key(request: Request, x_session_id: Optional[str]) -> str:
+    if x_session_id and x_session_id.strip():
+        return f"sess:{x_session_id.strip()}"
+    return f"ip:{client_ip(request)}"
+
+def rate_limit(ip: str):
+    now = time.time()
+    b = BUCKET_BY_IP.get(ip)
+    if not b:
+        b = TokenBucket(tokens=float(RATE_LIMIT_BURST), last_ts=now)
+        BUCKET_BY_IP[ip] = b
+
+    elapsed = now - b.last_ts
+    b.tokens = min(float(RATE_LIMIT_BURST), b.tokens + elapsed * RATE_LIMIT_RPS)
+    b.last_ts = now
+
+    if b.tokens < 1.0:
+        raise HTTPException(status_code=429, detail="Too Many Requests")
+    b.tokens -= 1.0
+
+def update_memory(key: str, bucket: Optional[str], tool: Optional[str]):
+    MEMORY_BY_KEY[key] = MemoryState(last_bucket=bucket, last_tool=tool, last_updated_ts=time.time())
+
+def get_memory(key: str) -> Optional[MemoryState]:
+    st = MEMORY_BY_KEY.get(key)
+    if not st:
+        return None
+    if time.time() - st.last_updated_ts > 1800:
+        MEMORY_BY_KEY.pop(key, None)
+        return None
+    return st
+
+
+# ============================================================
+# AUTH
+# ============================================================
+def require_api_key(x_api_key: Optional[str]):
+    if APP_API_KEY and x_api_key != APP_API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized (missing/invalid X-API-Key)")
+
+
+# ============================================================
+# BUCKET DISCOVERY (cached)
+# ============================================================
+_BUCKET_CACHE: Set[str] = set()
+_BUCKET_CACHE_TS: float = 0.0
+_BUCKET_CACHE_LAST_ERROR: Optional[str] = None
+
+def _seed_known_buckets() -> Set[str]:
+    """
+    If list_buckets is not permitted (common with scoped keys),
+    allow explicitly configured buckets to still pass require_bucket_allowed().
+    """
+    return {b for b in [ACCESS_LOGS_BUCKET, METRICS_BUCKET, *FALLBACK_BUCKETS, *SCHEDULER_SOURCE_BUCKETS] if b}
+
+
+def refresh_bucket_cache(force: bool = False) -> Set[str]:
+    global _BUCKET_CACHE, _BUCKET_CACHE_TS, _BUCKET_CACHE_LAST_ERROR
+    now = time.time()
+    if not force and _BUCKET_CACHE and (now - _BUCKET_CACHE_TS) < BUCKET_CACHE_TTL_SEC:
+        return _BUCKET_CACHE
+
+    STATS["bucket_cache_refreshes"] += 1
+    _BUCKET_CACHE_LAST_ERROR = None
+    try:
+        resp = s3.list_buckets()
+        buckets = {b["Name"] for b in resp.get("Buckets", []) if b.get("Name")}
+        if not buckets:
+            buckets = _seed_known_buckets()
+        _BUCKET_CACHE = buckets
+        _BUCKET_CACHE_TS = now
+        return _BUCKET_CACHE
+    except ClientError as e:
+        _BUCKET_CACHE_LAST_ERROR = f"{e}"
+    except Exception as e:
+        _BUCKET_CACHE_LAST_ERROR = str(e)
+
+    # If list_buckets is disallowed, fall back to explicitly configured buckets
+    # so require_bucket_allowed() will still work for scoped keys.
+    _BUCKET_CACHE = _seed_known_buckets()
+    _BUCKET_CACHE_TS = now
+    return _BUCKET_CACHE
+
+    _BUCKET_CACHE = set()
+    _BUCKET_CACHE_TS = now
+    return _BUCKET_CACHE
+
+def require_bucket_allowed(bucket: str):
+    buckets = refresh_bucket_cache()
+    if not buckets:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot list buckets with these Spaces credentials. Use unscoped key or set FALLBACK_BUCKETS.",
+        )
+    if bucket not in buckets:
+        raise HTTPException(status_code=403, detail=f"Bucket not allowed/not found: {bucket}")
+
+def normalize_prefix(p: str) -> str:
+    p = (p or "").strip()
+    if p and not p.endswith("/"):
+        p += "/"
+    return p
+
+def bytes_to_human(n: int) -> str:
+    size = float(n)
+    for unit in ["B", "KB", "MB", "GB", "TB", "PB"]:
+        if size < 1024.0:
+            return f"{size:.2f} {unit}"
+        size /= 1024.0
+    return f"{size:.2f} EB"
+
+def list_objects(bucket: str, prefix: str = "", max_items: Optional[int] = None) -> List[Dict[str, Any]]:
+    require_bucket_allowed(bucket)
+    paginator = s3.get_paginator("list_objects_v2")
+    out: List[Dict[str, Any]] = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for o in page.get("Contents", []):
+            out.append({
+                "key": o["Key"],
+                "size_bytes": int(o["Size"]),
+                "size_human": bytes_to_human(int(o["Size"])),
+                "last_modified": o["LastModified"].astimezone(timezone.utc).isoformat(),
+            })
+            if max_items and len(out) >= max_items:
+                return out
+    return out
+
+def recent_objects(bucket: str, prefix: str = "", limit: int = 10) -> Dict[str, Any]:
+    """
+    Return most recently modified objects.
+    NOTE: S3 listing isn't guaranteed to be ordered by last_modified, so we sort.
+    """
+    limit = max(1, min(int(limit), 200))
+    objs = list_objects(bucket, prefix=prefix)
+    # sort by last_modified ISO string (UTC ISO sorts lexicographically)
+    objs.sort(key=lambda x: x.get("last_modified") or "", reverse=True)
+    top = objs[:limit]
+    return {
+        "bucket": bucket,
+        "prefix": prefix,
+        "count_scanned": len(objs),
+        "limit": limit,
+        "objects": top,
+        "note": "Sorted by last_modified to find the most recent objects.",
+    }
+
+def safe_tail_lines(text: str, max_lines: int) -> List[str]:
+    lines = text.splitlines()
+    return lines if len(lines) <= max_lines else lines[-max_lines:]
+
+
+# ============================================================
+# ACCESS LOG PARSING
+# ============================================================
+_S3_TIME_RE = re.compile(r"\[(?P<ts>\d{2}/[A-Za-z]{3}/\d{4}:\d{2}:\d{2}:\d{2} [+\-]\d{4})\]")
+_REQ_RE = re.compile(r'"(?P<method>[A-Z]+)\s+(?P<path>[^ ]+)\s+(?P<proto>[^"]+)"')
+_AFTER_REQ_RE = re.compile(r'"\s+(?P<status>\d{3})\s+(?P<err>\S+)\s+(?P<bytes>\d+|-)')
+_IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+def looks_like_log_key(key: str) -> bool:
+    k = key.lower()
+    return ".log" in k and (k.endswith(".gz") or k.endswith(".log"))
+
+def extract_ip_from_access_log_line(line: str) -> Optional[str]:
+    parts = line.split()
+    if len(parts) >= 2:
+        candidate = parts[1]
+        if _IP_RE.fullmatch(candidate):
+            return candidate
+    m = _IP_RE.search(line)
+    return m.group(0) if m else None
+
+def parse_do_s3_access_line(line: str) -> Optional[Dict[str, Any]]:
+    try:
+        ip = extract_ip_from_access_log_line(line)
+        ts = None
+        m_ts = _S3_TIME_RE.search(line)
+        if m_ts:
+            ts = datetime.strptime(m_ts.group("ts"), "%d/%b/%Y:%H:%M:%S %z").astimezone(timezone.utc)
+
+        m_req = _REQ_RE.search(line)
+        if not m_req:
+            return None
+
+        method = m_req.group("method")
+        status = None
+        bytes_sent = 0
+
+        m_after = _AFTER_REQ_RE.search(line[m_req.end():])
+        if m_after:
+            status = int(m_after.group("status"))
+            b = m_after.group("bytes")
+            bytes_sent = int(b) if b.isdigit() else 0
+        else:
+            tail = line[m_req.end():].strip().split()
+            if len(tail) >= 1 and tail[0].isdigit():
+                status = int(tail[0])
+            for tok in tail[1:5]:
+                if tok.isdigit():
+                    bytes_sent = int(tok)
+                    break
+
+        return {"ts": ts, "method": method, "status": status, "bytes_sent": bytes_sent, "ip": ip, "raw": line}
+    except Exception:
+        return None
+
+
+# ============================================================
+# METRICS SNAPSHOT STORAGE (JSONL in Spaces)
+# ============================================================
+def _metrics_key_for_ts(ts: datetime) -> str:
+    dt = ts.strftime("%Y-%m-%d")
+    hh = ts.strftime("%H")
+    prefix = normalize_prefix(METRICS_PREFIX)
+    ext = "jsonl.gz" if METRICS_GZIP else "jsonl"
+    return f"{prefix}dt={dt}/hour={hh}/metrics.{ext}"
+
+def _put_metrics_line(bucket: str, key: str, line: str):
+    require_bucket_allowed(bucket)
+
+    existing = b""
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        existing = obj["Body"].read()
+        if METRICS_GZIP and key.endswith(".gz"):
+            existing = gzip.decompress(existing)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        if code not in {"NoSuchKey", "404"}:
+            raise
+
+    new_payload = existing + (line.rstrip("\n") + "\n").encode("utf-8")
+    body = gzip.compress(new_payload) if (METRICS_GZIP and key.endswith(".gz")) else new_payload
+    s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
+
+def storage_summary(bucket: str, prefix: str = "") -> Dict[str, Any]:
+    objs = list_objects(bucket, prefix=prefix)
+    total = sum(o["size_bytes"] for o in objs)
+    return {
+        "bucket": bucket,
+        "prefix": prefix,
+        "object_count": len(objs),
+        "total_size_bytes": total,
+        "total_size_human": bytes_to_human(total),
+    }
+
+def compute_request_metrics_from_logs(source_bucket: str) -> Dict[str, Any]:
+    if not ACCESS_LOGS_BUCKET:
+        return {"requests_total": 0, "note": "ACCESS_LOGS_BUCKET not set"}
+
+    root = normalize_prefix(ACCESS_LOGS_ROOT_PREFIX)
+    objs = list_objects(ACCESS_LOGS_BUCKET, prefix=root)
+
+    src = source_bucket.lower().strip()
+    candidates = [o for o in objs if src in o["key"].lower() and looks_like_log_key(o["key"])]
+    candidates.sort(key=lambda x: x["last_modified"], reverse=True)
+    candidates = candidates[:MAX_LOG_FILES_SCAN]
+
+    totals = {
+        "requests_total": 0,
+        "requests_get": 0,
+        "requests_put": 0,
+        "requests_delete": 0,
+        "requests_head": 0,
+        "status_2xx": 0,
+        "status_3xx": 0,
+        "status_4xx": 0,
+        "status_5xx": 0,
+        "bytes_sent": 0,
+        "unique_ips": 0,
+        "top_ips": [],
+        "files_scanned": 0,
+        "lines_scanned": 0,
+    }
+
+    if not candidates:
+        return totals
+
+    ip_counts = Counter()
+    lines_scanned = 0
+    files_scanned = 0
+
+    for o in candidates:
+        key = o["key"]
+        try:
+            obj = s3.get_object(Bucket=ACCESS_LOGS_BUCKET, Key=key)
+            raw = obj["Body"].read(MAX_LOG_BYTES + 1)
+            if len(raw) > MAX_LOG_BYTES:
+                continue
+            if key.lower().endswith(".gz"):
+                raw = gzip.decompress(raw)
+
+            text = raw.decode("utf-8", errors="replace")
+            for line in text.splitlines():
+                if not line:
+                    continue
+                parsed = parse_do_s3_access_line(line)
+                if not parsed:
+                    continue
+
+                totals["requests_total"] += 1
+                m = parsed["method"]
+                if m == "GET": totals["requests_get"] += 1
+                elif m == "PUT": totals["requests_put"] += 1
+                elif m == "DELETE": totals["requests_delete"] += 1
+                elif m == "HEAD": totals["requests_head"] += 1
+
+                st = parsed["status"]
+                if isinstance(st, int):
+                    if 200 <= st < 300: totals["status_2xx"] += 1
+                    elif 300 <= st < 400: totals["status_3xx"] += 1
+                    elif 400 <= st < 500: totals["status_4xx"] += 1
+                    elif 500 <= st < 600: totals["status_5xx"] += 1
+
+                totals["bytes_sent"] += int(parsed["bytes_sent"] or 0)
+
+                ip = parsed.get("ip")
+                if ip:
+                    ip_counts[ip] += 1
+
+                lines_scanned += 1
+                if lines_scanned >= MAX_LOG_LINES_SCAN:
+                    break
+
+            files_scanned += 1
+            if lines_scanned >= MAX_LOG_LINES_SCAN:
+                break
+        except Exception:
+            continue
+
+    totals["files_scanned"] = files_scanned
+    totals["lines_scanned"] = lines_scanned
+    totals["unique_ips"] = len(ip_counts)
+    totals["top_ips"] = [{"ip": ip, "count": c} for ip, c in ip_counts.most_common(10)]
+    return totals
+
+def run_metrics_snapshot(source_bucket: str, source_prefix: str = "") -> Dict[str, Any]:
+    if not ACCESS_LOGS_BUCKET:
+        raise HTTPException(status_code=400, detail="ACCESS_LOGS_BUCKET not set")
+
+    ts = datetime.now(timezone.utc)
+    logs_prefix = normalize_prefix(ACCESS_LOGS_ROOT_PREFIX)
+
+    src_summary = storage_summary(bucket=source_bucket, prefix=source_prefix)
+
+    objs = list_objects(ACCESS_LOGS_BUCKET, prefix=logs_prefix)
+    src = source_bucket.lower().strip()
+    logs_files = 0
+    logs_bytes = 0
+    for o in objs:
+        if src in o["key"].lower() and looks_like_log_key(o["key"]):
+            logs_files += 1
+            logs_bytes += int(o["size_bytes"])
+
+    record = {
+        "ts": ts.isoformat(),
+        "source_bucket": source_bucket,
+        "source_prefix": source_prefix or "",
+        "source_objects": int(src_summary["object_count"]),
+        "source_bytes": int(src_summary["total_size_bytes"]),
+        "logs_bucket": ACCESS_LOGS_BUCKET,
+        "logs_prefix": logs_prefix,
+        "logs_files": int(logs_files),
+        "logs_bytes": int(logs_bytes),
+    }
+    record.update(compute_request_metrics_from_logs(source_bucket))
+
+    key = _metrics_key_for_ts(ts)
+    _put_metrics_line(METRICS_BUCKET, key, json.dumps(record, separators=(",", ":")))
+    return {"metrics_bucket": METRICS_BUCKET, "metrics_key": key, "record": record}
+
+
+# ============================================================
+# METRICS READERS
+# ============================================================
+METRICS_MAX_POINTS = int(os.getenv("METRICS_MAX_POINTS", "2000"))
+
+def metrics_sources_internal(hours: int = 168) -> Dict[str, Any]:
+    hours = max(1, min(int(hours), 720))
+    metrics_prefix = normalize_prefix(METRICS_PREFIX)
+    objs = list_objects(METRICS_BUCKET, prefix=metrics_prefix)
+    objs.sort(key=lambda x: x["last_modified"], reverse=True)
+
+    cutoff = datetime.now(timezone.utc).timestamp() - (hours * 3600)
+    keep = []
+    for o in objs:
+        try:
+            lm = datetime.fromisoformat(o["last_modified"].replace("Z", "+00:00"))
+            if lm.timestamp() >= cutoff:
+                keep.append(o)
+        except Exception:
+            keep.append(o)
+    keep = keep[:200]
+
+    sources = set()
+    for o in keep:
+        key = o["key"]
+        try:
+            obj = s3.get_object(Bucket=METRICS_BUCKET, Key=key)
+            raw = obj["Body"].read(MAX_LOG_BYTES + 1)
+            if len(raw) > MAX_LOG_BYTES:
+                continue
+            if key.endswith(".gz"):
+                raw = gzip.decompress(raw)
+            text = raw.decode("utf-8", errors="replace")
+            for line in text.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                b = (rec.get("source_bucket") or "").strip()
+                if b:
+                    sources.add(b)
+        except Exception:
+            continue
+
+    out = sorted(sources)
+    return {"count": len(out), "sources": out, "metrics_bucket": METRICS_BUCKET, "metrics_prefix": metrics_prefix}
+
+def metrics_series_internal(source_bucket: str, source_prefix: str = "", limit: int = 500, hours: int = 168) -> Dict[str, Any]:
+    limit = max(1, min(int(limit), METRICS_MAX_POINTS))
+    hours = max(1, min(int(hours), 720))
+
+    want_bucket = (source_bucket or "").strip()
+    want_bucket_l = want_bucket.lower()
+    want_prefix = (source_prefix or "").strip()
+
+    metrics_prefix = normalize_prefix(METRICS_PREFIX)
+    objs = list_objects(METRICS_BUCKET, prefix=metrics_prefix)
+    objs.sort(key=lambda x: x["last_modified"], reverse=True)
+
+    cutoff = datetime.now(timezone.utc).timestamp() - (hours * 3600)
+    keep = []
+    for o in objs:
+        try:
+            lm = datetime.fromisoformat(o["last_modified"].replace("Z", "+00:00"))
+            if lm.timestamp() >= cutoff:
+                keep.append(o)
+        except Exception:
+            keep.append(o)
+    keep = keep[:200]
+
+    points = []
+    for o in reversed(keep):
+        key = o["key"]
+        try:
+            obj = s3.get_object(Bucket=METRICS_BUCKET, Key=key)
+            raw = obj["Body"].read(MAX_LOG_BYTES + 1)
+            if len(raw) > MAX_LOG_BYTES:
+                continue
+            if key.endswith(".gz"):
+                raw = gzip.decompress(raw)
+            text = raw.decode("utf-8", errors="replace")
+
+            for line in text.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if (rec.get("source_bucket") or "").lower() != want_bucket_l:
+                    continue
+                if (rec.get("source_prefix") or "").strip() != want_prefix:
+                    continue
+                if not rec.get("ts"):
+                    continue
+                points.append(rec)
+        except Exception:
+            continue
+
+    points.sort(key=lambda p: p.get("ts") or "")
+    if len(points) > limit:
+        points = points[-limit:]
+    return {"source_bucket": want_bucket, "source_prefix": want_prefix, "count": len(points), "points": points}
+
+# ============================================================
+# METRICS HTTP ENDPOINTS (needed by frontend dashboard)
+# ============================================================
+@app.get("/metrics/sources")
+def http_metrics_sources(
+    hours: int = 168,
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    """
+    Frontend bucket discovery endpoint.
+    Returns list of source buckets discovered from stored snapshot objects.
+    """
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    return metrics_sources_internal(hours=hours)
+
+
+@app.get("/metrics/series")
+def http_metrics_series(
+    source_bucket: str,
+    source_prefix: str = "",
+    limit: int = 500,
+    hours: int = 168,
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    """
+    Frontend timeseries endpoint for a specific bucket/prefix.
+    """
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    return metrics_series_internal(
+        source_bucket=source_bucket,
+        source_prefix=source_prefix,
+        limit=limit,
+        hours=hours,
+    )
+
+
+@app.get("/metrics/aggregate-series")
+def http_metrics_aggregate_series(
+    hours: int = 24,
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    """
+    Optional (but many dashboards use this):
+    Aggregates totals across all buckets at each timestamp from stored snapshot records.
+    Returns points with summed source_bytes/logs_bytes/source_objects/logs_files and request stats if present.
+    """
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+
+    hours = max(1, min(int(hours), 168))  # cap at 7 days
+
+    # Discover buckets from snapshots, then pull series per bucket and aggregate by ts.
+    srcs = metrics_sources_internal(hours=hours).get("sources") or []
+    agg: Dict[str, Dict[str, int]] = defaultdict(lambda: {
+        "source_bytes": 0,
+        "logs_bytes": 0,
+        "source_objects": 0,
+        "logs_files": 0,
+        "requests_total": 0,
+        "bytes_sent": 0,
+        "status_4xx": 0,
+        "status_5xx": 0,
+    })
+
+    for b in srcs:
+        series = metrics_series_internal(source_bucket=b, source_prefix="", hours=hours, limit=2000)
+        for rec in series.get("points", []):
+            ts = rec.get("ts")
+            if not ts:
+                continue
+            a = agg[ts]
+            a["source_bytes"] = int(rec.get("source_bytes", 0) or 0)
+            a["logs_bytes"] = int(rec.get("logs_bytes", 0) or 0)
+            a["source_objects"] = int(rec.get("source_objects", 0) or 0)
+            a["logs_files"] = int(rec.get("logs_files", 0) or 0)
+            a["requests_total"] = int(rec.get("requests_total", 0) or 0)
+            a["bytes_sent"] = int(rec.get("bytes_sent", 0) or 0)
+            a["status_4xx"] = int(rec.get("status_4xx", 0) or 0)
+            a["status_5xx"] = int(rec.get("status_5xx", 0) or 0)
+
+    points = [{"ts": ts, **vals} for ts, vals in sorted(agg.items(), key=lambda x: x[0])]
+    return {
+        "hours": hours,
+        "count": len(points),
+        "points": points,
+        "sources_count": len(srcs),
+        "note": "Aggregated totals across discovered source buckets from stored snapshot points.",
+    }
+
+# ============================================================
+# COMPATIBILITY TOOL ROUTES (for existing frontend)
+# Your frontend is calling /tools/buckets -> add it back.
+# ============================================================
+@app.get("/tools/buckets")
+def tool_buckets(
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    STATS["tool_requests"] = 1
+
+    buckets = sorted(list(refresh_bucket_cache(force=True)))
+    if not buckets:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Cannot list buckets with current Spaces credentials. "
+                "Use an unscoped key that can list buckets, or set FALLBACK_BUCKETS."
+            ),
+        )
+    return {"bucket_count": len(buckets), "buckets": buckets}
+
+
+@app.get("/tools/storage-summary")
+def tool_storage_summary(
+    bucket: str,
+    prefix: str = "",
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    STATS["tool_requests"] = 1
+    return storage_summary(bucket, prefix)
+
+
+@app.get("/tools/list-all")
+def tool_list_all(
+    bucket: str,
+    prefix: str = "",
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    STATS["tool_requests"] = 1
+    objs = list_objects(bucket, prefix=prefix)
+    return {
+        "bucket": bucket,
+        "prefix": prefix,
+        "count": len(objs),
+        "objects": objs[:MAX_LIST_OBJECTS_RETURN],
+        "truncated": len(objs) > MAX_LIST_OBJECTS_RETURN,
+    }
+
+
+@app.get("/tools/top-largest")
+def tool_top_largest(
+    bucket: str,
+    limit: int = 10,
+    prefix: str = "",
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    STATS["tool_requests"] = 1
+    limit = max(1, min(int(limit), MAX_TOP_LARGEST))
+    objs = list_objects(bucket, prefix=prefix)
+    objs.sort(key=lambda x: x["size_bytes"], reverse=True)
+    return {"bucket": bucket, "prefix": prefix, "limit": limit, "objects": objs[:limit]}
+
+
+
+# ============================================================
+# LOGS: list/read/search + object audit timeline
+# ============================================================
+def read_log_object(bucket: str, key: str, tail_lines: int = 200) -> Dict[str, Any]:
+    require_bucket_allowed(bucket)
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    raw = obj["Body"].read(MAX_LOG_BYTES + 1)
+    if len(raw) > MAX_LOG_BYTES:
+        raise HTTPException(status_code=413, detail="Log file too large")
+    if key.lower().endswith(".gz"):
+        raw = gzip.decompress(raw)
+    text = raw.decode("utf-8", errors="replace")
+    lines = safe_tail_lines(text, min(int(tail_lines), MAX_LOG_LINES))
+    return {"bucket": bucket, "key": key, "returned_lines": len(lines), "log_lines": lines}
+
+def list_access_log_objects_for_source(source_bucket: str, date_yyyy_mm_dd: Optional[str] = None, max_items: int = 200) -> List[Dict[str, Any]]:
+    if not ACCESS_LOGS_BUCKET:
+        raise HTTPException(status_code=400, detail="ACCESS_LOGS_BUCKET not set")
+    root = normalize_prefix(ACCESS_LOGS_ROOT_PREFIX)
+    objs = list_objects(ACCESS_LOGS_BUCKET, prefix=root)
+    src = source_bucket.lower().strip()
+    out = []
+    for o in objs:
+        k = o["key"]
+        if src in k.lower() and looks_like_log_key(k):
+            if date_yyyy_mm_dd and date_yyyy_mm_dd not in k:
+                continue
+            out.append(o)
+    out.sort(key=lambda x: x["last_modified"], reverse=True)
+    return out[:max(1, min(int(max_items), 500))]
+
+def search_access_logs(
+    source_bucket: str,
+    contains: Optional[str] = None,
+    method: Optional[str] = None,
+    object_key: Optional[str] = None,
+    status_prefix: Optional[str] = None,  # "2","4","5"
+    date_yyyy_mm_dd: Optional[str] = None,
+    limit_matches: int = 20,
+) -> Dict[str, Any]:
+    """
+    Searches .log/.log.gz for matches. Returns parsed matches with ip/method/status/ts and the log object ref.
+    """
+    candidates = list_access_log_objects_for_source(source_bucket, date_yyyy_mm_dd=date_yyyy_mm_dd, max_items=MAX_LOG_FILES_SCAN)
+    want_method = (method or "").upper().strip() or None
+    want_contains = contains
+    want_key = object_key
+    want_key_alt = None
+    if want_key and " " in want_key:
+        want_key_alt = want_key.replace(" ", "%20")
+
+    out = []
+    files_scanned = 0
+    lines_scanned = 0
+
+    for o in candidates:
+        log_key = o["key"]
+        try:
+            obj = s3.get_object(Bucket=ACCESS_LOGS_BUCKET, Key=log_key)
+            raw = obj["Body"].read(MAX_LOG_BYTES + 1)
+            if len(raw) > MAX_LOG_BYTES:
+                continue
+            if log_key.lower().endswith(".gz"):
+                raw = gzip.decompress(raw)
+            text = raw.decode("utf-8", errors="replace")
+
+            for line in text.splitlines():
+                if not line:
+                    continue
+                if want_contains and want_contains not in line:
+                    continue
+                if want_key and (want_key not in line) and (want_key_alt and want_key_alt not in line):
+                    continue
+                if want_method and (f'"{want_method} ' not in line):
+                    continue
+
+                parsed = parse_do_s3_access_line(line)
+                if not parsed:
+                    continue
+
+                if status_prefix:
+                    st = parsed.get("status")
+                    if not (isinstance(st, int) and str(st).startswith(str(status_prefix))):
+                        continue
+
+                out.append({
+                    "ip": parsed.get("ip"),
+                    "ts": parsed["ts"].isoformat() if parsed.get("ts") else None,
+                    "method": parsed.get("method"),
+                    "status": parsed.get("status"),
+                    "bytes_sent": parsed.get("bytes_sent"),
+                    "log_object": {"bucket": ACCESS_LOGS_BUCKET, "key": log_key},
+                    "raw": parsed.get("raw", "")[:3000],
+                })
+
+                if len(out) >= int(limit_matches):
+                    break
+
+                lines_scanned += 1
+                if lines_scanned >= MAX_LOG_LINES_SCAN:
+                    break
+
+            files_scanned += 1
+            if len(out) >= int(limit_matches) or lines_scanned >= MAX_LOG_LINES_SCAN:
+                break
+        except Exception:
+            continue
+
+    out.sort(key=lambda x: x["ts"] or "", reverse=True)
+    return {
+        "source_bucket": source_bucket,
+        "date": date_yyyy_mm_dd,
+        "count": len(out),
+        "matches": out,
+        "files_scanned": files_scanned,
+        "lines_scanned": lines_scanned,
+        "note": "Matches are best-effort based on scanned recent log files.",
+    }
+
+def object_audit_timeline(source_bucket: str, object_key: str, hours: int = 168, limit: int = 50, methods: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    CloudTrail-ish timeline for a specific object:
+    - searches access logs for that object key across recent files
+    - optionally filters by methods (PUT/GET/DELETE/HEAD)
+    """
+    methods = methods or ["PUT", "GET", "DELETE", "HEAD"]
+    methods = [m.upper().strip() for m in methods if m and isinstance(m, str)]
+    methods = methods[:10]
+
+    # You can tighten by date if desired; here we scan recent files and let ts filter.
+    matches_all: List[Dict[str, Any]] = []
+    for m in methods:
+        res = search_access_logs(
+            source_bucket=source_bucket,
+            method=m,
+            object_key=object_key,
+            limit_matches=max(20, min(200, limit)),
+        )
+        matches_all.extend(res.get("matches", []))
+
+    # filter by time window if timestamps exist
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max(1, min(int(hours), 720)))
+    def parse_ts(s: Optional[str]) -> Optional[datetime]:
+        try:
+            if not s:
+                return None
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    filtered = []
+    for x in matches_all:
+        ts = parse_ts(x.get("ts"))
+        if ts and ts >= cutoff:
+            filtered.append(x)
+        elif ts is None:
+            # keep unknown ts entries, but they might not be in window
+            filtered.append(x)
+
+    filtered.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    filtered = filtered[:max(1, min(int(limit), 200))]
+
+    return {
+        "source_bucket": source_bucket,
+        "object_key": object_key,
+        "hours": hours,
+        "methods": methods,
+        "count": len(filtered),
+        "events": filtered,
+        "note": "Use method=PUT to find upload events (and IP).",
+    }
+
+
+# ============================================================
+# OPTIONAL SCHEDULER (snapshots every 5 minutes)
+# ============================================================
+@app.on_event("startup")
+async def startup_scheduler():
+    if not ENABLE_SCHEDULER:
+        return
+    if SCHEDULER_LEADER_ID and SCHEDULER_INSTANCE_ID and SCHEDULER_LEADER_ID != SCHEDULER_INSTANCE_ID:
+        return
+
+    async def loop():
+        while True:
+            STATS["scheduler_runs"] += 1
+            try:
+                # Priority order:
+                # 1) Explicit SCHEDULER_SOURCE_BUCKETS (doesn't require list_buckets)
+                # 2) Bucket cache (list_buckets OR seeded known buckets)
+                # 3) Discover from existing snapshots
+                buckets = list(SCHEDULER_SOURCE_BUCKETS)
+                if not buckets:
+                    buckets = sorted(list(refresh_bucket_cache()))
+                if not buckets:
+                    ms = metrics_sources_internal(hours=720)
+                    buckets = ms.get("sources") or []
+
+                for b in buckets:
+                    if ACCESS_LOGS_BUCKET and b == ACCESS_LOGS_BUCKET:
+                        continue
+                    try:
+                        run_metrics_snapshot(b, "")
+                        STATS["scheduler_snapshots_ok"] += 1
+                    except Exception:
+                        traceback.print_exc()
+            except Exception:
+                STATS["scheduler_snapshots_err"] += 1
+                traceback.print_exc()
+
+            await asyncio.sleep(max(60, int(SNAPSHOT_EVERY_SEC)))
+
+    asyncio.create_task(loop())
+
+
+# ============================================================
+# DO AGENT CALL
+# ============================================================
+def call_do_agent(messages: List[Dict[str, str]]) -> Tuple[str, Dict[str, Any]]:
+    STATS["agent_calls"] += 1
+    payload = {"messages": messages}
+    headers = {"Authorization": f"Bearer {DO_AGENT_KEY}", "Content-Type": "application/json"}
+
+    last_err = None
+    for attempt in range(DO_AGENT_RETRIES + 1):
+        try:
+            r = httpx.post(DO_AGENT_URL, json=payload, headers=headers, timeout=DO_AGENT_TIMEOUT_SEC)
+            if r.status_code >= 400:
+                last_err = f"{r.status_code}: {r.text}"
+            else:
+                data = r.json()
+                answer = data["choices"][0]["message"]["content"]
+                return answer, data
+        except Exception as e:
+            last_err = str(e)
+        time.sleep(0.25 * (attempt + 1))
+
+    STATS["agent_failures"] += 1
+    raise HTTPException(status_code=502, detail=f"Agent call failed: {last_err}")
+
+
+# ============================================================
+# AI TOOL FRAMEWORK
+# ============================================================
+def _truncate_json_for_agent(obj: Any) -> str:
+    s = json.dumps(obj, ensure_ascii=False)
+    if len(s) <= AGENT_MAX_TOOL_BYTES:
+        return s
+    head = s[: int(AGENT_MAX_TOOL_BYTES * 0.7)]
+    tail = s[-int(AGENT_MAX_TOOL_BYTES * 0.3):]
+    return head + "\n...<truncated>...\n" + tail
+
+def _parse_first_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Robust: extracts FIRST JSON object from the assistant message.
+    - allows leading text
+    - allows ``` fenced blocks
+    - DOES NOT accept multiple JSON objects; we handle that separately
+    """
+    if not text:
+        return None
+    t = text.strip()
+
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\n?", "", t).strip()
+        if t.endswith("```"):
+            t = t[:-3].strip()
+
+    # quick direct parse
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+
+    # extract first object-like region (best-effort)
+    m = re.search(r"\{.*\}", t, flags=re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+def _count_json_objects(text: str) -> int:
+    """
+    Rough detection of multiple JSON objects in one message.
+    We enforce ONE tool call per assistant message for reliability.
+    """
+    if not text:
+        return 0
+    # count occurrences of '{"type"' which is our contract marker
+    return len(re.findall(r'\{\s*"type"\s*:', text))
+
+def _tool_error(msg: str) -> Dict[str, Any]:
+    return {"ok": False, "error": msg}
+
+def _tool_ok(data: Any) -> Dict[str, Any]:
+    return {"ok": True, "data": data}
+
+
+# Tool Registry (primitives; AI composes answers from these)
+TOOLS: Dict[str, Dict[str, Any]] = {
+    "buckets": {
+        "description": "List allowed Spaces buckets. If permission fails, use metrics_sources instead.",
+        "args_schema": {},
+        "fn": lambda args: {"bucket_count": len(refresh_bucket_cache(force=True)), "buckets": sorted(list(refresh_bucket_cache(force=True)))},
+    },
+    "list_objects": {
+        "description": "List objects in a bucket/prefix. Use max_items to keep it small.",
+        "args_schema": {"bucket": "string", "prefix": "string(optional)", "max_items": "int(optional)"},
+        "fn": lambda args: list_objects(str(args["bucket"]), prefix=str(args.get("prefix") or ""), max_items=int(args.get("max_items") or MAX_LIST_OBJECTS_RETURN)),
+    },
+    "recent_objects": {
+        "description": "Return most recently modified objects (sorted by last_modified).",
+        "args_schema": {"bucket": "string", "prefix": "string(optional)", "limit": "int(optional)"},
+        "fn": lambda args: recent_objects(str(args["bucket"]), prefix=str(args.get("prefix") or ""), limit=int(args.get("limit") or 10)),
+    },
+    "storage_summary": {
+        "description": "Total bytes/objects for a bucket/prefix.",
+        "args_schema": {"bucket": "string", "prefix": "string(optional)"},
+        "fn": lambda args: storage_summary(str(args["bucket"]), prefix=str(args.get("prefix") or "")),
+    },
+    "top_largest": {
+        "description": "Largest objects by size for a bucket/prefix.",
+        "args_schema": {"bucket": "string", "prefix": "string(optional)", "limit": "int(optional)"},
+        "fn": lambda args: (
+            lambda bucket, prefix, limit: (
+                lambda objs: {"bucket": bucket, "prefix": prefix, "limit": limit, "objects": objs[:limit]}
+            )(
+                sorted(list_objects(bucket, prefix=prefix), key=lambda x: x["size_bytes"], reverse=True)
+            )
+        )(str(args["bucket"]), str(args.get("prefix") or ""), max(1, min(int(args.get("limit") or 10), MAX_TOP_LARGEST))),
+    },
+
+    "snapshot": {
+        "description": "Write a metrics snapshot for a source bucket into METRICS_BUCKET (storage + request stats from logs).",
+        "args_schema": {"source_bucket": "string", "source_prefix": "string(optional)"},
+        "fn": lambda args: run_metrics_snapshot(str(args["source_bucket"]), str(args.get("source_prefix") or "")),
+    },
+    "metrics_sources": {
+        "description": "Discover source buckets by scanning stored snapshots in METRICS_BUCKET/METRICS_PREFIX.",
+        "args_schema": {"hours": "int(optional)"},
+        "fn": lambda args: metrics_sources_internal(hours=int(args.get("hours") or 720)),
+    },
+    "metrics_series": {
+        "description": "Get time series snapshot points for a source bucket/prefix.",
+        "args_schema": {"source_bucket": "string", "source_prefix": "string(optional)", "hours": "int(optional)", "limit": "int(optional)"},
+        "fn": lambda args: metrics_series_internal(
+            source_bucket=str(args["source_bucket"]),
+            source_prefix=str(args.get("source_prefix") or ""),
+            hours=int(args.get("hours") or 720),
+            limit=int(args.get("limit") or 500),
+        ),
+    },
+
+    "list_access_logs": {
+        "description": "List log objects (.log/.log.gz) for a source bucket in ACCESS_LOGS_BUCKET.",
+        "args_schema": {"source_bucket": "string", "date_yyyy_mm_dd": "string(optional)", "max_items": "int(optional)"},
+        "fn": lambda args: list_access_log_objects_for_source(
+            str(args["source_bucket"]),
+            date_yyyy_mm_dd=args.get("date_yyyy_mm_dd"),
+            max_items=int(args.get("max_items") or 50),
+        ),
+    },
+    "read_log": {
+        "description": "Read tail of a log object (supports .gz). Provide bucket+key.",
+        "args_schema": {"bucket": "string", "key": "string", "tail_lines": "int(optional)"},
+        "fn": lambda args: read_log_object(str(args["bucket"]), str(args["key"]), int(args.get("tail_lines") or 200)),
+    },
+    "search_logs": {
+        "description": "Search access logs for a bucket with filters: method/object_key/status_prefix/contains (supports .gz).",
+        "args_schema": {
+            "source_bucket": "string",
+            "contains": "string(optional)",
+            "method": "string(optional)",
+            "object_key": "string(optional)",
+            "status_prefix": "string(optional)",
+            "date_yyyy_mm_dd": "string(optional)",
+            "limit_matches": "int(optional)",
+        },
+        "fn": lambda args: search_access_logs(
+            source_bucket=str(args["source_bucket"]),
+            contains=args.get("contains"),
+            method=args.get("method"),
+            object_key=args.get("object_key"),
+            status_prefix=args.get("status_prefix"),
+            date_yyyy_mm_dd=args.get("date_yyyy_mm_dd"),
+            limit_matches=int(args.get("limit_matches") or 20),
+        ),
+    },
+    "object_audit": {
+        "description": "CloudTrail-ish event timeline for an object (find upload IP via PUT).",
+        "args_schema": {
+            "source_bucket": "string",
+            "object_key": "string",
+            "hours": "int(optional)",
+            "limit": "int(optional)",
+            "methods": "list(optional)",
+        },
+        "fn": lambda args: object_audit_timeline(
+            source_bucket=str(args["source_bucket"]),
+            object_key=str(args["object_key"]),
+            hours=int(args.get("hours") or 168),
+            limit=int(args.get("limit") or 50),
+            methods=args.get("methods") if isinstance(args.get("methods"), list) else None,
+        ),
+    },
+}
+
+def _execute_tool(tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    spec = TOOLS.get(tool)
+    if not spec:
+        return _tool_error(f"Unknown tool: {tool}")
+    try:
+        out = spec["fn"](args or {})
+        # unify shape
+        if isinstance(out, dict) and "ok" in out and ("data" in out or "error" in out):
+            return out
+        return _tool_ok(out)
+    except Exception as e:
+        return _tool_error(f"{type(e).__name__}: {e}")
+
+
+AGENT_SYSTEM = f"""
+You are SpaceWatch, an AI observability assistant for object storage (DigitalOcean Spaces / S3-style) and access logs.
+You have tool access through this backend. YOU are the driver. You must decide which tools to call.
+
+Hard rules:
+- You MUST NOT ask the user to choose buckets unless it is truly impossible to proceed.
+- Use tools to discover buckets: prefer metrics_sources(); if buckets() works, you can use it too.
+- If user asks "last uploaded file", use recent_objects() (it sorts by last_modified).
+- If user asks "from which IP uploaded", use object_audit(methods=["PUT"]) or search_logs(method="PUT", object_key=...).
+- Output EXACTLY ONE JSON object and NOTHING ELSE (no extra text).
+- NEVER output more than one tool call per message.
+
+Response format:
+- To call a tool:
+  {{"type":"tool_call","tool":"<tool_name>","args":{{...}}}}
+- To answer:
+  {{"type":"final","answer":"<plain English answer>"}}.
+
+Available tools and schemas:
+{json.dumps({k: {"description": v["description"], "args_schema": v["args_schema"]} for k, v in TOOLS.items()}, indent=2)}
+""".strip()
+
+
+# ============================================================
+# CHAT (AI-driven tool loop)
+# ============================================================
+@app.post("/chat")
+def chat(req: ChatRequest, request: Request, x_api_key: Optional[str] = Header(None), x_session_id: Optional[str] = Header(None)):
+    require_api_key(x_api_key)
+    rate_limit(client_ip(request))
+    STATS["chat_requests"] += 1
+
+    user_msg = (req.message or "").strip()
+    if not user_msg:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    mkey = memory_key(request, x_session_id)
+    mem = get_memory(mkey)
+
+    context = {
+        "now_utc": datetime.now(timezone.utc).isoformat(),
+        "spaces_endpoint": SPACES_ENDPOINT,
+        "access_logs_bucket": ACCESS_LOGS_BUCKET,
+        "access_logs_prefix": normalize_prefix(ACCESS_LOGS_ROOT_PREFIX),
+        "metrics_bucket": METRICS_BUCKET,
+        "metrics_prefix": normalize_prefix(METRICS_PREFIX),
+        "bucket_cache_count": len(refresh_bucket_cache()),
+        "fallback_buckets_configured": bool(FALLBACK_BUCKETS),
+        "last_bucket_context": mem.last_bucket if mem else None,
+        "last_tool_context": mem.last_tool if mem else None,
+        "notes": [
+            "Access logs may contain URL-encoded keys (spaces become %20).",
+            "S3 object listings are NOT ordered by last_modified; use recent_objects().",
+        ],
+    }
+
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": AGENT_SYSTEM},
+        {"role": "user", "content": json.dumps({"context": context, "user_question": user_msg}, indent=2)},
+    ]
+
+    last_bucket_used: Optional[str] = None
+    last_tool_used: Optional[str] = None
+
+    for _step in range(AGENT_MAX_STEPS):
+        content, raw = call_do_agent(messages)
+
+        # Enforce: one JSON object only. If model outputs multiple, force retry.
+        if _count_json_objects(content) > 1:
+            messages.append({
+                "role": "user",
+                "content": json.dumps({
+                    "error": "You output more than one JSON object/tool call. Output EXACTLY ONE JSON object only.",
+                    "required_format": {"type": "tool_call|final", "tool": "...", "args": {}, "answer": "..."}
+                })
+            })
+            continue
+
+        parsed = _parse_first_json_object(content)
+        if not parsed:
+            messages.append({
+                "role": "user",
+                "content": json.dumps({
+                    "error": "You did not output valid JSON. Output EXACTLY ONE JSON object only.",
+                    "required_format": {"type": "tool_call|final", "tool": "...", "args": {}, "answer": "..."}
+                })
+            })
+            continue
+
+        if parsed.get("type") == "final":
+            ans = str(parsed.get("answer") or "").strip()
+            update_memory(mkey, bucket=last_bucket_used, tool=last_tool_used or "chat")
+            return {"answer": ans, "tool_used": last_tool_used, "bucket_used": last_bucket_used, "raw": raw}
+
+        if parsed.get("type") != "tool_call":
+            messages.append({
+                "role": "user",
+                "content": json.dumps({"error": "Invalid type. Use type=tool_call or type=final only."})
+            })
+            continue
+
+        tool = str(parsed.get("tool") or "").strip()
+        args = parsed.get("args") or {}
+        if not isinstance(args, dict):
+            args = {}
+
+        # track context for follow-ups
+        for k in ("bucket", "source_bucket"):
+            if k in args and isinstance(args[k], str) and args[k].strip():
+                last_bucket_used = args[k].strip()
+                break
+        last_tool_used = tool
+
+        STATS["tool_requests"] += 1
+        tool_result = _execute_tool(tool, args)
+
+        messages.append({
+            "role": "user",
+            "content": json.dumps({
+                "tool_result": {
+                    "tool": tool,
+                    "args": args,
+                    "result": json.loads(_truncate_json_for_agent(tool_result)),
+                },
+                "instruction": "Use this tool_result. Decide next tool_call or return final. Output ONE JSON object only."
+            })
+        })
+
+    update_memory(mkey, bucket=last_bucket_used, tool=last_tool_used or "chat")
+    return {
+        "answer": f"I hit the maximum tool steps ({AGENT_MAX_STEPS}) for this request. Try narrowing the question (one bucket or one object).",
+        "tool_used": last_tool_used,
+        "bucket_used": last_bucket_used,
+    }
+
+
+# ============================================================
+# HEALTH / STATS / OPTIONAL ENDPOINTS
+# ============================================================
+@app.get("/health")
+def health():
+    buckets = refresh_bucket_cache()
+    return {
+        "ok": True,
+        "spaces_endpoint": SPACES_ENDPOINT,
+        "spaces_region": SPACES_REGION,
+        "api_key_protection": bool(APP_API_KEY),
+        "bucket_cache_count": len(buckets),
+        "bucket_cache_last_error": _BUCKET_CACHE_LAST_ERROR,
+        "fallback_buckets_enabled": bool(FALLBACK_BUCKETS),
+        "agent": {"max_steps": AGENT_MAX_STEPS, "max_tool_bytes": AGENT_MAX_TOOL_BYTES},
+        "scheduler": {"enabled": ENABLE_SCHEDULER, "every_sec": SNAPSHOT_EVERY_SEC},
+    }
+
+@app.get("/stats")
+def stats(x_api_key: Optional[str] = Header(None)):
+    require_api_key(x_api_key)
+    return STATS
+
+@app.post("/metrics/snapshot")
+def metrics_snapshot(source_bucket: str, source_prefix: str = "", x_api_key: Optional[str] = Header(None), request: Request = None):
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    return run_metrics_snapshot(source_bucket, source_prefix)
+
+@app.get("/plots/top-ips.png")
+def plot_top_ips_png(
+    source_bucket: str,
+    date_yyyy_mm_dd: Optional[str] = None,
+    limit: int = 20,
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+
+    # Use log search and count IPs
+    res = search_access_logs(
+        source_bucket=source_bucket,
+        date_yyyy_mm_dd=date_yyyy_mm_dd,
+        limit_matches=2000,
+    )
+    ip_counts = Counter()
+    for m in res.get("matches", []):
+        if m.get("ip"):
+            ip_counts[m["ip"]] += 1
+
+    top = ip_counts.most_common(max(1, min(int(limit), 50)))
+    if not top:
+        fig = plt.figure(figsize=(8, 2.5))
+        plt.text(0.5, 0.5, "No IP data found", ha="center", va="center")
+        plt.axis("off")
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=140, bbox_inches="tight")
+        plt.close(fig)
+        return Response(content=buf.getvalue(), media_type="image/png")
+
+    ips = [x[0] for x in top]
+    counts = [x[1] for x in top]
+
+    fig = plt.figure(figsize=(10, 4.5))
+    plt.bar(range(len(ips)), counts)
+    plt.xticks(range(len(ips)), ips, rotation=45, ha="right")
+    plt.ylabel("Requests (count)")
+    plt.title(f"Top IPs for {source_bucket}" + (f" on {date_yyyy_mm_dd}" if date_yyyy_mm_dd else ""))
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=140)
+    plt.close(fig)
+    return Response(content=buf.getvalue(), media_type="image/png")

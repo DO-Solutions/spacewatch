@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SpaceWatch</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+  <style>
+    :root{
+      --bg:#0b1220;
+      --panel:#0f172a;
+      --border:#22314a;
+      --muted:#9fb0c3;
+      --text:#e6edf3;
+    }
+    body{
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(1200px 700px at 20% 10%, #101b32 0%, var(--bg) 60%);
+      color: var(--text);
+      margin:0;
+      padding:40px 18px;
+    }
+    .wrap{ max-width: 1060px; margin:0 auto; }
+    h1{ margin:0 0 18px; font-size: 36px; letter-spacing: .2px; }
+    .card{
+      background: linear-gradient(180deg, rgba(15,23,42,.95), rgba(7,12,24,.95));
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:18px;
+      box-shadow: 0 10px 40px rgba(0,0,0,.35);
+      margin-bottom: 16px;
+    }
+    .row{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      flex-wrap:wrap;
+      margin-bottom: 10px;
+    }
+    .title{
+      color: var(--muted);
+      font-size: 14px;
+      letter-spacing:.2px;
+    }
+    .controls{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    select, button{
+      background:#111826;
+      color: var(--text);
+      border:1px solid #243043;
+      border-radius: 999px;
+      padding:8px 12px;
+      font-size: 13px;
+      outline:none;
+    }
+    button:hover{ border-color:#2f425f; cursor:pointer; }
+    button:disabled{ opacity:.55; cursor:not-allowed; }
+    .pill{
+      padding:7px 10px;
+      border-radius:999px;
+      font-size: 12px;
+      border:1px solid #243043;
+      color: var(--muted);
+      background:#0b1426;
+      white-space:nowrap;
+    }
+    .pill.ok{ color:#b7f7c3; border-color:#204b2c; background:rgba(16,41,22,.55); }
+    .pill.err{ color:#ffb4b4; border-color:#5a1d1d; background:rgba(55,15,15,.55); }
+    .grid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    textarea{
+      width:100%;
+      min-height: 92px;
+      resize: vertical;
+      border-radius: 12px;
+      border:1px solid var(--border);
+      background:#071226;
+      color: var(--text);
+      padding:12px 12px;
+      font-size: 14px;
+      outline:none;
+    }
+    .chatlog{
+      font-size:14px;
+      line-height:1.45;
+      color: var(--text);
+      max-height: 360px;
+      overflow:auto;
+      padding-right:6px;
+    }
+    .msg{ margin: 10px 0; }
+    .msg .who{ color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+    .msg .bubble{
+      display:inline-block;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(7,12,24,.75);
+      max-width: 100%;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.ai .bubble{ background: rgba(14,24,44,.75); }
+    .hint{ color: var(--muted); font-size: 12px; margin-top: 8px; }
+    canvas{ width:100% !important; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>SpaceWatch</h1>
+
+    <div class="card">
+      <div class="row">
+        <div class="title">Bucket metrics over time (derived from snapshots)</div>
+        <div class="controls">
+          <select id="bucketSel" title="Source bucket"></select>
+          <select id="metricSel" title="Metric">
+            <option value="storage">Storage (source_bytes + logs_bytes)</option>
+            <option value="requests">Requests (total + methods)</option>
+            <option value="errors">Errors (4xx + 5xx)</option>
+            <option value="bandwidth">Bandwidth (bytes_sent)</option>
+            <option value="unique_ips">Unique IPs</option>
+			<option value="top_ips">Top IPs (bar chart)</option>
+          </select>
+          <button id="refreshBtn">Refresh</button>
+          <div class="pill" id="chartStatus">Loading…</div>
+        </div>
+      </div>
+
+      <canvas id="metricsChart" height="140"></canvas>
+	  <img id="ipBarImg" style="display:none; width:100%; border-radius:12px; border:1px solid #22314a; margin-top:10px;" />
+      <div class="hint">
+        Tip: request/bandwidth/error lines show only after your newer snapshots include those fields.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div class="title">Ask the assistant about your Spaces</div>
+        <div class="controls">
+          <button id="sendBtn">Send</button>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="chatlog" id="chat"></div>
+        <textarea id="input" placeholder="Try: show access logs for testbucket11&#10;Try: show me the largest files in testbucket11"></textarea>
+      </div>
+
+      <div class="hint">
+        Example prompts:
+        <br>• List objects in testbucket11
+        <br>• Storage summary for testbucket11
+        <br>• Show access logs for testbucket11
+        <br>• Show IPs from access logs for testbucket11
+      </div>
+    </div>
+  </div>
+
+<script>
+  // =========================
+  // CONFIG
+  // =========================
+  // If you enabled APP_API_KEY in the backend, set it here (or leave blank).
+  const APP_API_KEY = ""; // e.g. "my-secret-key"
+  const BASE_URL = "";    // same origin
+
+  function getSessionId() {
+    const k = "spacewatch_session";
+    let v = localStorage.getItem(k);
+    if (!v) {
+      v = "sess_" + Math.random().toString(16).slice(2) + "_" + Date.now();
+      localStorage.setItem(k, v);
+    }
+    return v;
+  }
+
+  function headersBase() {
+    const h = {
+      "Content-Type": "application/json",
+      "X-Session-Id": getSessionId()
+    };
+    if (APP_API_KEY) h["X-API-Key"] = APP_API_KEY;
+    return h;
+  }
+
+  // =========================
+  // UI helpers
+  // =========================
+  const chat = document.getElementById("chat");
+  const input = document.getElementById("input");
+  const btn = document.getElementById("sendBtn");
+  const chartStatus = document.getElementById("chartStatus");
+  const bucketSel = document.getElementById("bucketSel");
+  const metricSel = document.getElementById("metricSel");
+  const refreshBtn = document.getElementById("refreshBtn");
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function add(who, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + (who === "ai" ? "ai" : "me");
+    div.innerHTML = `
+      <div class="who">${who === "ai" ? "AI" : "You"}</div>
+      <div class="bubble">${escapeHtml(text)}</div>
+    `;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function bytesToHuman(n) {
+    let x = Number(n || 0);
+    let i = 0;
+    const units = ["B","KB","MB","GB","TB","PB"];
+    while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+    return (i === 0 ? x.toFixed(0) : x.toFixed(2)) + " " + units[i];
+  }
+
+  function numberToHuman(n) {
+    const x = Number(n || 0);
+    return x.toLocaleString();
+  }
+
+  function setStatus(kind, text) {
+    chartStatus.classList.remove("ok","err");
+    if (kind) chartStatus.classList.add(kind);
+    chartStatus.textContent = text;
+  }
+
+  // =========================
+  // Chart
+  // =========================
+  let metricsChart = null;
+
+  function yFormatterForMetric(metricMode) {
+    if (metricMode === "storage" || metricMode === "bandwidth") {
+      return (v) => bytesToHuman(v);
+    }
+    return (v) => numberToHuman(v);
+  }
+
+  function tooltipFormatterForMetric(metricMode) {
+    if (metricMode === "storage" || metricMode === "bandwidth") {
+      return (ctx) => `${ctx.dataset.label}: ${bytesToHuman(ctx.raw)}`;
+    }
+    return (ctx) => `${ctx.dataset.label}: ${numberToHuman(ctx.raw)}`;
+  }
+
+  function buildDatasets(points, sourceBucket, metricMode) {
+    const labels = points.map(p => new Date(p.ts).toLocaleString());
+    const getSeries = (k) => points.map(p => Number(p[k] || 0));
+
+    if (metricMode === "storage") {
+      return {
+        labels,
+        datasets: [
+          { label: `${sourceBucket} (source_bytes)`, data: getSeries("source_bytes"), borderWidth: 2 },
+          { label: `Access logs (logs_bytes)`, data: getSeries("logs_bytes"), borderWidth: 2, borderDash: [6,6] }
+        ]
+      };
+    }
+
+    if (metricMode === "requests") {
+      return {
+        labels,
+        datasets: [
+          { label: "requests_total", data: getSeries("requests_total"), borderWidth: 2 },
+          { label: "GET", data: getSeries("requests_get"), borderWidth: 2, borderDash: [6,6] },
+          { label: "PUT", data: getSeries("requests_put"), borderWidth: 2, borderDash: [6,6] },
+          { label: "HEAD", data: getSeries("requests_head"), borderWidth: 2, borderDash: [6,6] },
+          { label: "DELETE", data: getSeries("requests_delete"), borderWidth: 2, borderDash: [6,6] },
+        ]
+      };
+    }
+
+    if (metricMode === "errors") {
+      return {
+        labels,
+        datasets: [
+          { label: "status_4xx", data: getSeries("status_4xx"), borderWidth: 2 },
+          { label: "status_5xx", data: getSeries("status_5xx"), borderWidth: 2, borderDash: [6,6] },
+        ]
+      };
+    }
+
+    if (metricMode === "bandwidth") {
+      return {
+        labels,
+        datasets: [
+          { label: "bytes_sent", data: getSeries("bytes_sent"), borderWidth: 2 }
+        ]
+      };
+    }
+
+    return {
+      labels,
+      datasets: [
+        { label: "unique_ips", data: getSeries("unique_ips"), borderWidth: 2 }
+      ]
+    };
+  }
+
+  function renderChart(points, sourceBucket, metricMode) {
+    const ctx = document.getElementById("metricsChart").getContext("2d");
+    const data = buildDatasets(points, sourceBucket, metricMode);
+
+    const yTickFmt = yFormatterForMetric(metricMode);
+    const tipFmt = tooltipFormatterForMetric(metricMode);
+
+    if (!metricsChart) {
+	metricsChart = new Chart(ctx, {
+	  type: "line",
+	  data,
+	  options: {
+		responsive: true,
+		interaction: { mode: "nearest", intersect: false },
+		plugins: {
+		  tooltip: {
+			callbacks: { label: tipFmt }
+		  },
+		  zoom: {
+			zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+			pan: { enabled: true, mode: "x" }
+		  }
+		},
+		scales: {
+		  y: { ticks: { callback: yTickFmt } }
+		}
+	  }
+	});
+    } else {
+      metricsChart.data.labels = data.labels;
+      metricsChart.data.datasets = data.datasets;
+      metricsChart.options.scales.y.ticks.callback = yTickFmt;
+      metricsChart.options.plugins.tooltip.callbacks.label = tipFmt;
+      metricsChart.update();
+    }
+  }
+
+  // =========================
+  // Data load
+  // =========================
+  async function loadBuckets() {
+    setStatus(null, "Loading buckets…");
+    bucketSel.innerHTML = "";
+
+    const r = await fetch(`${BASE_URL}/tools/buckets`, { headers: headersBase() });
+    if (!r.ok) throw new Error(`Bucket discovery failed (${r.status}). ${await r.text()}`);
+
+    const data = await r.json();
+    const buckets = Array.isArray(data.buckets) ? data.buckets : [];
+    if (!buckets.length) throw new Error("No buckets returned from /tools/buckets");
+
+    // Put non-log buckets first (best effort)
+    buckets.sort((a,b) => {
+      const al = a.toLowerCase(), bl = b.toLowerCase();
+      const as = (al.includes("log") || al.includes("metrics")) ? 1 : 0;
+      const bs = (bl.includes("log") || bl.includes("metrics")) ? 1 : 0;
+      return as - bs || a.localeCompare(b);
+    });
+
+    for (const b of buckets) {
+      const opt = document.createElement("option");
+      opt.value = b;
+      opt.textContent = b;
+      bucketSel.appendChild(opt);
+    }
+
+    const saved = localStorage.getItem("spacewatch_bucket");
+    if (saved && buckets.includes(saved)) bucketSel.value = saved;
+
+    setStatus("ok", `Buckets: ${buckets.length}`);
+  }
+
+  async function loadMetricsForBucket(sourceBucket) {
+    const url = `${BASE_URL}/metrics/series?source_bucket=${encodeURIComponent(sourceBucket)}&source_prefix=&limit=500`;
+    const r = await fetch(url, { headers: headersBase() });
+    if (!r.ok) throw new Error(`Metrics request failed (${r.status}). ${await r.text()}`);
+    return await r.json();
+  }
+
+  async function refreshMetrics() {
+  refreshBtn.disabled = true;
+  const b = bucketSel.value;
+  const mode = metricSel.value;
+  localStorage.setItem("spacewatch_bucket", b);
+
+  const img = document.getElementById("ipBarImg");
+  const canvas = document.getElementById("metricsChart");
+
+  try {
+    setStatus(null, "Loading…");
+
+    if (mode === "top_ips") {
+      // Hide Chart.js line chart, show python-rendered image
+      canvas.style.display = "none";
+      img.style.display = "block";
+
+      // (Optional) add &limit=30 or &date_yyyy_mm_dd=2025-12-27
+      const url = `${BASE_URL}/plots/top-ips.png?source_bucket=${encodeURIComponent(b)}&limit=20`;
+
+      // cache-bust so refresh actually refreshes
+      img.src = url + `&_=${Date.now()}`;
+      setStatus("ok", `Top IPs: ${b}`);
+      return;
+    }
+
+    // Default behavior (Chart.js time series)
+    img.style.display = "none";
+    canvas.style.display = "block";
+
+    setStatus(null, "Loading metrics…");
+    const data = await loadMetricsForBucket(b);
+    const points = Array.isArray(data.points) ? data.points : [];
+    if (!points.length) {
+      setStatus("err", `No metrics for ${b}`);
+      renderChart([], b, mode);
+      return;
+    }
+    setStatus("ok", `Showing: ${b}`);
+    renderChart(points, b, mode);
+
+  } catch (e) {
+    setStatus("err", String(e.message || e));
+  } finally {
+    refreshBtn.disabled = false;
+  }
+}
+
+  // =========================
+  // Chat
+  // =========================
+  async function send() {
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    add("me", msg);
+    input.value = "";
+    btn.disabled = true;
+
+    try {
+      const r = await fetch(`${BASE_URL}/chat`, {
+        method: "POST",
+        headers: headersBase(),
+        body: JSON.stringify({ message: msg })
+      });
+
+      const data = await r.json();
+      if (!r.ok) {
+        add("ai", `Error: ${data.detail || JSON.stringify(data)}`);
+      } else {
+        add("ai", data.answer || JSON.stringify(data));
+      }
+    } catch (e) {
+      add("ai", `Network error: ${e}`);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.onclick = send;
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  refreshBtn.addEventListener("click", refreshMetrics);
+  bucketSel.addEventListener("change", refreshMetrics);
+  metricSel.addEventListener("change", refreshMetrics);
+
+  // bootstrap
+  (async () => {
+    try {
+      await loadBuckets();
+      await refreshMetrics();
+    } catch (e) {
+      setStatus("err", String(e.message || e));
+    }
+  })();
+</script>
+</body>
+</html>

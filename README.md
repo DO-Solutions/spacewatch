@@ -90,7 +90,7 @@ METRICS_BUCKET=my-access-logs
 METRICS_PREFIX=spacewatch-metrics/
 
 # App Security (optional but recommended)
-APP_API_KEY=your_secret_key
+APP_API_KEY=devkey
 ```
 
 4. **Run the application**

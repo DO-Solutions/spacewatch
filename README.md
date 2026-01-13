@@ -79,8 +79,8 @@ SPACES_KEY=your_spaces_access_key
 SPACES_SECRET=your_spaces_secret_key
 
 # AI Agent (OpenAI-compatible)
-DO_AGENT_URL=https://api.openai.com/v1/chat/completions
-DO_AGENT_KEY=your_openai_api_key
+DO_AGENT_URL=https://your-agent-host/v1/chat/completions
+DO_AGENT_KEY=your_agent_api_key
 
 # Access Logs + Metrics
 ACCESS_LOGS_BUCKET=my-access-logs
@@ -406,7 +406,7 @@ spacewatch/
 
 ## License
 
-MIT License - See LICENSE file for details
+This project is open source. Please check with the repository owner for licensing details.
 
 ## Contributing
 

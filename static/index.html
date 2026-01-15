@@ -392,6 +392,64 @@
       <h1>SpaceWatch</h1>
     </div>
 
+    <!-- STORAGE OPERATIONS DASHBOARD (S3/Azure Blob style) -->
+    <div class="card">
+      <div class="row">
+        <div class="title">Storage Operations Health (Real-time - Last 5 minutes)</div>
+        <div class="controls">
+          <button id="refreshHealthBtn">Refresh Metrics</button>
+          <div class="pill" id="healthStatus">Loading…</div>
+        </div>
+      </div>
+
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Operations/sec</div>
+          <div id="opsPerSecValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Total Operations</div>
+          <div id="totalOpsValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Error Rate</div>
+          <div id="errorRateValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Data Transfer/sec</div>
+          <div id="bytesPerSecValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P50</div>
+          <div id="p50Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P95</div>
+          <div id="p95Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P99</div>
+          <div id="p99Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Avg Latency</div>
+          <div id="avgLatencyValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+      </div>
+
+      <!-- Operation Breakdown -->
+      <div id="operationBreakdown" style="margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+        <div style="font-size: 13px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">Operation Breakdown (by type)</div>
+        <div id="operationBreakdownContent" style="font-size: 12px; color: var(--text); line-height: 1.6;">
+          Loading operation statistics...
+        </div>
+      </div>
+
+      <div class="hint" style="margin-top: 12px;">
+        Real-time storage operation metrics from <code>/health</code> endpoint. Similar to AWS S3 and Azure Blob Storage metrics dashboards.
+      </div>
+    </div>
+
     <!-- METRICS DASHBOARD -->
     <div class="card">
       <div class="row">
@@ -1111,6 +1169,83 @@ Examples:
   }
 
   // =========================
+  // Storage Health Metrics (S3/Azure Blob style)
+  // =========================
+  async function refreshStorageHealth() {
+    const healthBtn = document.getElementById("refreshHealthBtn");
+    const healthStatus = document.getElementById("healthStatus");
+    
+    if (healthBtn) healthBtn.disabled = true;
+    
+    try {
+      healthStatus.classList.remove("ok", "err");
+      healthStatus.textContent = "Loading...";
+      
+      const r = await fetch(`${BASE_URL}/health`, { headers: headersBase() });
+      if (!r.ok) throw new Error(`Health check failed (${r.status})`);
+      
+      const data = await r.json();
+      const sm = data.storage_metrics || {};
+      
+      // Update storage metrics display
+      document.getElementById("opsPerSecValue").textContent = (sm.operations_per_second || 0).toFixed(2);
+      document.getElementById("totalOpsValue").textContent = numberToHuman(sm.total_operations_5m || 0);
+      document.getElementById("errorRateValue").textContent = `${(sm.error_rate_percent || 0).toFixed(1)}%`;
+      document.getElementById("bytesPerSecValue").textContent = bytesToHuman(sm.bytes_per_second || 0) + "/s";
+      document.getElementById("p50Value").textContent = `${(sm.latency_p50_ms || 0).toFixed(0)}ms`;
+      document.getElementById("p95Value").textContent = `${(sm.latency_p95_ms || 0).toFixed(0)}ms`;
+      document.getElementById("p99Value").textContent = `${(sm.latency_p99_ms || 0).toFixed(0)}ms`;
+      document.getElementById("avgLatencyValue").textContent = `${(sm.avg_latency_ms || 0).toFixed(0)}ms`;
+      
+      // Operation breakdown
+      const breakdown = sm.operation_breakdown || {};
+      let breakdownHtml = "";
+      if (Object.keys(breakdown).length === 0) {
+        breakdownHtml = "<em style='color: var(--muted);'>No recent operations</em>";
+      } else {
+        breakdownHtml = "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;'>";
+        for (const [opType, stats] of Object.entries(breakdown)) {
+          const errorClass = stats.error_rate_percent > 5 ? "color: var(--danger);" : "color: var(--ok);";
+          // Escape HTML to prevent XSS
+          const safeOpType = escapeHtml(opType);
+          breakdownHtml += `
+            <div style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: rgba(11,18,32,.4);">
+              <div style="font-weight: 600; margin-bottom: 4px;">${safeOpType}</div>
+              <div style="font-size: 11px; line-height: 1.5;">
+                <div>Requests: <strong>${numberToHuman(stats.request_count || 0)}</strong></div>
+                <div>Errors: <strong style="${errorClass}">${stats.error_count || 0} (${(stats.error_rate_percent || 0).toFixed(1)}%)</strong></div>
+                <div>P95: <strong>${(stats.p95 || 0).toFixed(0)}ms</strong></div>
+                <div>Data: <strong>${bytesToHuman(stats.bytes_transferred || 0)}</strong></div>
+              </div>
+            </div>
+          `;
+        }
+        breakdownHtml += "</div>";
+      }
+      document.getElementById("operationBreakdownContent").innerHTML = breakdownHtml;
+      
+      // Set health status
+      const errorRate = sm.error_rate_percent || 0;
+      if (errorRate > 10) {
+        healthStatus.classList.add("err");
+        healthStatus.textContent = "Unhealthy";
+      } else if (errorRate > 5) {
+        healthStatus.classList.add("warn");  // 'warn' class is defined in the CSS above
+        healthStatus.textContent = "Degraded";
+      } else {
+        healthStatus.classList.add("ok");
+        healthStatus.textContent = "Healthy";
+      }
+    } catch (e) {
+      healthStatus.classList.add("err");
+      healthStatus.textContent = "Error";
+      console.error("Failed to load storage health:", e);
+    } finally {
+      if (healthBtn) healthBtn.disabled = false;
+    }
+  }
+
+  // =========================
   // Chat (progress bar while waiting)
   // =========================
   async function send() {
@@ -1193,11 +1328,21 @@ Examples:
 
   notifBtn.addEventListener("click", enableNotifications);
 
+  // Health metrics refresh
+  const refreshHealthBtn = document.getElementById("refreshHealthBtn");
+  if (refreshHealthBtn) {
+    refreshHealthBtn.addEventListener("click", refreshStorageHealth);
+  }
+
   // bootstrap
   (async () => {
     try {
       await loadBuckets();
       await refreshMetrics();
+      await refreshStorageHealth(); // Load storage health metrics on start
+      
+      // Auto-refresh storage health every 30 seconds
+      setInterval(refreshStorageHealth, 30000);
     } catch (e) {
       setStatus("err", String(e.message || e));
     }

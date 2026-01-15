@@ -7,29 +7,28 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
   <style>
-    /* DigitalOcean Cloud Color Scheme */
+    /* AWS & Azure Standard Color Scheme */
     :root{
       --bg:#ffffff;
-      --panel:#e8edf4;
-      --border:#b0bac9;
-      --muted:#687076;
-      --text:#161f27;
-      --danger:#dc3545;
-      --dangerBorder:#dc3545;
-      --dangerBg:rgba(220,53,69,.1);
-      --ok:#00d084;
-      --okBorder:#00d084;
-      --okBg:rgba(0,208,132,.1);
-      --warn:#ffb020;
-      --warnBorder:#ffb020;
-      --warnBg:rgba(255,176,32,.1);
-      --accent:#0069ff;
-      --accentHover:#0052cc;
-      --doBlue:#0069ff;
-      --doLightBlue:#f0f7ff;
-      --disabled:#ccc;
-      --darkPurple:#6b46c1;
-      --darkBlue:#1e40af;
+      --panel:#f2f3f3;
+      --border:#d5dbdb;
+      --muted:#545b64;
+      --text:#16191f;
+      --danger:#d13212;
+      --dangerBorder:#d13212;
+      --dangerBg:rgba(209,50,18,.1);
+      --ok:#1d8102;
+      --okBorder:#1d8102;
+      --okBg:rgba(29,129,2,.1);
+      --warn:#ff9900;
+      --warnBorder:#ff9900;
+      --warnBg:rgba(255,153,0,.1);
+      --accent:#0073bb;
+      --accentHover:#005a9e;
+      --accentLight:#e6f2f8;
+      --disabled:#aab7b8;
+      --awsOrange:#ff9900;
+      --azureBlue:#0078d4;
     }
     body{
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -58,7 +57,7 @@
       transition: all 0.2s;
     }
     .github-link:hover{
-      background: var(--doLightBlue);
+      background: var(--accentLight);
       border-color: var(--accent);
       color: var(--accent);
     }
@@ -126,7 +125,7 @@
     input{ width: 120px; }
     input.small{ width: 86px; }
     button:hover{ 
-      background: var(--doLightBlue);
+      background: var(--accentLight);
       border-color: var(--accent); 
       cursor:pointer; 
     }
@@ -212,7 +211,7 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .msg.ai .bubble{ background: var(--doLightBlue); border-color: var(--accent); color: var(--text); }
+    .msg.ai .bubble{ background: var(--accentLight); border-color: var(--accent); color: var(--text); }
 
     /* Progress bar (indeterminate) */
     .thinkingWrap{
@@ -226,7 +225,7 @@
       height: 10px;
       width: 100%;
       position: relative;
-      background: var(--doLightBlue);
+      background: var(--accentLight);
     }
     .thinkingBar::before{
       content:"";
@@ -353,7 +352,7 @@
       line-height: 1;
     }
     .agent-close:hover {
-      background: var(--doLightBlue);
+      background: var(--accentLight);
       color: var(--accent);
     }
 
@@ -961,19 +960,24 @@ Examples:
     const labels = points.map(p => new Date(p.ts).toLocaleString());
     const getSeries = (k) => points.map(p => Number(p[k] || 0));
 
-    // Color palette with DigitalOcean theme
+    // AWS & Azure standard color palette for data visualization
     const colors = [
-      { bg: 'rgba(54, 162, 235, 0.8)', border: 'rgba(54, 162, 235, 1)' },    // Blue
-      { bg: 'rgba(255, 99, 132, 0.8)', border: 'rgba(255, 99, 132, 1)' },    // Red
-      { bg: 'rgba(75, 192, 192, 0.8)', border: 'rgba(75, 192, 192, 1)' },    // Green
-      { bg: 'rgba(255, 206, 86, 0.8)', border: 'rgba(255, 206, 86, 1)' },    // Yellow
-      { bg: 'rgba(153, 102, 255, 0.8)', border: 'rgba(153, 102, 255, 1)' },  // Purple
-      { bg: 'rgba(255, 159, 64, 0.8)', border: 'rgba(255, 159, 64, 1)' }     // Orange
+      { bg: 'rgba(0, 115, 187, 0.8)', border: 'rgba(0, 115, 187, 1)' },    // Azure Blue (primary)
+      { bg: 'rgba(255, 153, 0, 0.8)', border: 'rgba(255, 153, 0, 1)' },    // AWS Orange
+      { bg: 'rgba(29, 129, 2, 0.8)', border: 'rgba(29, 129, 2, 1)' },      // Success Green
+      { bg: 'rgba(0, 120, 212, 0.8)', border: 'rgba(0, 120, 212, 1)' },    // Azure Cyan (secondary)
+      { bg: 'rgba(209, 50, 18, 0.8)', border: 'rgba(209, 50, 18, 1)' },    // Error Red
+      { bg: 'rgba(84, 91, 100, 0.8)', border: 'rgba(84, 91, 100, 1)' }     // Neutral Gray
     ];
 
-    // Special colors for GET (dark purple) and HEAD/access logs (dark blue)
-    const darkPurple = { bg: 'rgba(107, 70, 193, 0.8)', border: 'rgba(107, 70, 193, 1)' };
-    const darkBlue = { bg: 'rgba(30, 64, 175, 0.8)', border: 'rgba(30, 64, 175, 1)' };
+    // Specific colors for common operations (AWS CloudWatch style)
+    // Use colors array references for consistency
+    const azureBlue = colors[0];      // Primary Azure Blue
+    const awsOrange = colors[1];      // AWS Orange
+    const successGreen = colors[2];   // Success Green
+    const azureCyan = colors[3];      // Secondary Azure Cyan
+    const errorRed = colors[4];       // Error Red
+    const neutralGray = colors[5];    // Neutral Gray
 
     if (metricMode === "storage") {
       return {
@@ -982,15 +986,15 @@ Examples:
           { 
             label: `${sourceBucket} (source_bytes)`, 
             data: getSeries("source_bytes"), 
-            backgroundColor: colors[0].bg,
-            borderColor: colors[0].border,
+            backgroundColor: azureBlue.bg,
+            borderColor: azureBlue.border,
             borderWidth: 2 
           },
           { 
             label: `Access logs (logs_bytes)`, 
             data: getSeries("logs_bytes"), 
-            backgroundColor: darkBlue.bg,
-            borderColor: darkBlue.border,
+            backgroundColor: azureCyan.bg,
+            borderColor: azureCyan.border,
             borderWidth: 2
           }
         ]
@@ -1003,36 +1007,36 @@ Examples:
           { 
             label: "requests_total", 
             data: getSeries("requests_total"), 
-            backgroundColor: colors[0].bg,
-            borderColor: colors[0].border,
+            backgroundColor: azureBlue.bg,
+            borderColor: azureBlue.border,
             borderWidth: 2 
           },
           { 
             label: "GET", 
             data: getSeries("requests_get"), 
-            backgroundColor: darkPurple.bg,
-            borderColor: darkPurple.border,
+            backgroundColor: awsOrange.bg,
+            borderColor: awsOrange.border,
             borderWidth: 2
           },
           { 
             label: "PUT", 
             data: getSeries("requests_put"), 
-            backgroundColor: colors[2].bg,
-            borderColor: colors[2].border,
+            backgroundColor: successGreen.bg,
+            borderColor: successGreen.border,
             borderWidth: 2
           },
           { 
             label: "HEAD", 
             data: getSeries("requests_head"), 
-            backgroundColor: darkBlue.bg,
-            borderColor: darkBlue.border,
+            backgroundColor: azureCyan.bg,
+            borderColor: azureCyan.border,
             borderWidth: 2
           },
           { 
             label: "DELETE", 
             data: getSeries("requests_delete"), 
-            backgroundColor: colors[4].bg,
-            borderColor: colors[4].border,
+            backgroundColor: errorRed.bg,
+            borderColor: errorRed.border,
             borderWidth: 2
           }
         ]
@@ -1045,15 +1049,15 @@ Examples:
           { 
             label: "status_4xx", 
             data: getSeries("status_4xx"), 
-            backgroundColor: colors[3].bg,
-            borderColor: colors[3].border,
+            backgroundColor: awsOrange.bg,
+            borderColor: awsOrange.border,
             borderWidth: 2 
           },
           { 
             label: "status_5xx", 
             data: getSeries("status_5xx"), 
-            backgroundColor: colors[1].bg,
-            borderColor: colors[1].border,
+            backgroundColor: errorRed.bg,
+            borderColor: errorRed.border,
             borderWidth: 2
           }
         ]
@@ -1065,8 +1069,8 @@ Examples:
         datasets: [{ 
           label: "bytes_sent", 
           data: getSeries("bytes_sent"), 
-          backgroundColor: colors[2].bg,
-          borderColor: colors[2].border,
+          backgroundColor: successGreen.bg,
+          borderColor: successGreen.border,
           borderWidth: 2 
         }] 
       };
@@ -1077,8 +1081,8 @@ Examples:
       datasets: [{ 
         label: "unique_ips", 
         data: getSeries("unique_ips"), 
-        backgroundColor: colors[0].bg,
-        borderColor: colors[0].border,
+        backgroundColor: azureBlue.bg,
+        borderColor: azureBlue.border,
         borderWidth: 2 
       }] 
     };

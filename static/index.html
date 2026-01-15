@@ -795,6 +795,26 @@ Examples:
       .replaceAll("'", "&#039;");
   }
 
+  function formatOperationType(opType) {
+    // Format operation type labels for better readability
+    const labelMap = {
+      'UNKNOWN': 'Other Requests',
+      'PAGE_LOAD': 'Page Load',
+      'STATIC_ASSET': 'Static Assets',
+      'HEALTH_CHECK': 'Health Check',
+      'STATS': 'Statistics',
+      'LIST_BUCKETS': 'List Buckets',
+      'LIST_OBJECTS': 'List Objects',
+      'ANALYZE_STORAGE': 'Storage Analysis',
+      'AI_QUERY': 'AI Chat',
+      'QUERY_METRICS': 'Metrics Query',
+      'QUERY_LOGS': 'Logs Query',
+      'GENERATE_PLOT': 'Generate Charts'
+    };
+    
+    return labelMap[opType] || opType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
   function add(who, text) {
     const div = document.createElement("div");
     div.className = "msg " + (who === "ai" ? "ai" : "me");
@@ -1267,8 +1287,9 @@ Examples:
         breakdownHtml = "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;'>";
         for (const [opType, stats] of Object.entries(breakdown)) {
           const errorClass = stats.error_rate_percent > 5 ? "color: var(--danger);" : "color: var(--ok);";
-          // Escape HTML to prevent XSS
-          const safeOpType = escapeHtml(opType);
+          // Format and escape operation type label
+          const formattedOpType = formatOperationType(opType);
+          const safeOpType = escapeHtml(formattedOpType);
           breakdownHtml += `
             <div style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: rgba(11,18,32,.4);">
               <div style="font-weight: 600; margin-bottom: 4px;">${safeOpType}</div>

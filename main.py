@@ -179,7 +179,15 @@ async def track_storage_operations(request: Request, call_next):
     bucket = None
     
     path = request.url.path
-    if "/tools/buckets" in path or "/metrics/sources" in path:
+    if path == "/" or path == "/static/index.html":
+        operation_type = "PAGE_LOAD"
+    elif "/static/" in path:
+        operation_type = "STATIC_ASSET"
+    elif "/health" in path:
+        operation_type = "HEALTH_CHECK"
+    elif "/stats" in path:
+        operation_type = "STATS"
+    elif "/tools/buckets" in path or "/metrics/sources" in path:
         operation_type = "LIST_BUCKETS"
     elif "/tools/list-all" in path or "/tools/storage-summary" in path:
         operation_type = "LIST_OBJECTS"
@@ -193,6 +201,8 @@ async def track_storage_operations(request: Request, call_next):
         operation_type = "QUERY_METRICS"
     elif "/logs" in path or "access_logs" in path or "search_logs" in path:
         operation_type = "QUERY_LOGS"
+    elif "/plots/" in path:
+        operation_type = "GENERATE_PLOT"
     
     try:
         response = await call_next(request)

@@ -521,7 +521,12 @@
       </div>
 
       <div class="agent-input-area">
-        <textarea id="input" placeholder="Ask me anything about your Spaces...&#10;&#10;Examples:&#10;• List objects in [bucket-name]&#10;• Storage summary for [bucket-name]&#10;• Show access logs for [bucket-name]"></textarea>
+        <textarea id="input" placeholder="Ask me anything about your Spaces...
+
+Examples:
+• List objects in [bucket-name]
+• Storage summary for [bucket-name]
+• Show access logs for [bucket-name]"></textarea>
         <button id="sendBtn">Send Message</button>
         <div class="agent-hint">
           <strong>Quick tips:</strong> Ask about buckets, objects, storage usage, access logs, or request metrics.
@@ -532,7 +537,10 @@
     <!-- Floating Action Button -->
     <button class="agent-fab" id="agentFab" aria-label="Open AI Assistant">
       <svg viewBox="0 0 24 24">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+        <circle cx="12" cy="10" r="1.5"/>
+        <circle cx="8" cy="10" r="1.5"/>
+        <circle cx="16" cy="10" r="1.5"/>
       </svg>
     </button>
   </div>
@@ -543,6 +551,7 @@
   // =========================
   const APP_API_KEY = ""; // optional: backend APP_API_KEY
   const BASE_URL = "";    // same origin
+  const AGENT_AUTO_HIDE_DELAY_MS = 10000; // Auto-hide delay after receiving response (10 seconds)
 
   function getSessionId() {
     const k = "spacewatch_session";
@@ -613,8 +622,8 @@
     }
   }
 
-  function scheduleAutoHide(delayMs = 10000) {
-    // Auto-hide after 10 seconds of inactivity (after receiving response)
+  function scheduleAutoHide(delayMs = AGENT_AUTO_HIDE_DELAY_MS) {
+    // Auto-hide after configured delay of inactivity (after receiving response)
     if (autoHideTimer) {
       clearTimeout(autoHideTimer);
     }
@@ -1129,14 +1138,14 @@
         add("ai", data.answer || JSON.stringify(data));
       }
 
-      // Schedule auto-hide after response is shown (10 seconds)
-      scheduleAutoHide(10000);
+      // Schedule auto-hide after response is shown
+      scheduleAutoHide();
     } catch (e) {
       thinkingMsg.remove();
       thinking.style.display = "none";
       add("ai", `Network error: ${e}`);
       // Still schedule auto-hide on error
-      scheduleAutoHide(10000);
+      scheduleAutoHide();
     } finally {
       btn.disabled = false;
     }

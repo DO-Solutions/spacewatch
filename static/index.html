@@ -35,15 +35,6 @@
     h1{ margin:0 0 18px; font-size: 36px; letter-spacing: .2px; }
     .header{ display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
     .header h1{ margin: 0; }
-    .github-link{
-      color: var(--accent);
-      text-decoration: none;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .github-link:hover{ opacity: 0.8; }
     .card{
       background: linear-gradient(180deg, rgba(15,23,42,.95), rgba(7,12,24,.95));
       border:1px solid var(--border);
@@ -233,18 +224,172 @@
       background: rgba(34,49,74,.7);
       margin: 10px 0;
     }
+
+    /* Floating Agent Button */
+    .agent-fab {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), #4d8aff);
+      border: 2px solid rgba(102,163,255,.4);
+      box-shadow: 0 8px 24px rgba(102,163,255,.35), 0 2px 8px rgba(0,0,0,.45);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .agent-fab:hover {
+      transform: scale(1.1);
+      box-shadow: 0 12px 32px rgba(102,163,255,.45), 0 4px 12px rgba(0,0,0,.55);
+    }
+    .agent-fab svg {
+      width: 28px;
+      height: 28px;
+      fill: white;
+    }
+
+    /* Agent Panel Sliding from Right */
+    .agent-panel {
+      position: fixed;
+      top: 0;
+      right: -450px;
+      width: 450px;
+      height: 100vh;
+      background: linear-gradient(180deg, rgba(15,23,42,.98), rgba(7,12,24,.98));
+      border-left: 1px solid var(--border);
+      box-shadow: -8px 0 40px rgba(0,0,0,.5);
+      z-index: 999;
+      transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .agent-panel.open {
+      right: 0;
+    }
+
+    .agent-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(11,18,32,.6);
+    }
+    .agent-header h2 {
+      margin: 0;
+      font-size: 20px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .agent-close {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 24px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: all 0.2s;
+      line-height: 1;
+    }
+    .agent-close:hover {
+      background: rgba(255,255,255,.1);
+      color: var(--text);
+    }
+
+    .agent-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .agent-input-area {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      background: rgba(11,18,32,.6);
+    }
+    .agent-input-area textarea {
+      min-height: 80px;
+      margin-bottom: 10px;
+    }
+    .agent-input-area button {
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      border: 1px solid rgba(102,163,255,.5);
+      color: white;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    .agent-input-area button:hover {
+      background: #5599ff;
+      border-color: rgba(102,163,255,.8);
+    }
+    .agent-input-area button:disabled {
+      background: #2d4766;
+      border-color: #243043;
+      color: var(--muted);
+    }
+
+    .agent-hint {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+      margin-top: 8px;
+    }
+
+    /* Mobile Responsive */
+    @media (max-width: 768px) {
+      .agent-panel {
+        width: 100%;
+        right: -100%;
+      }
+      .agent-fab {
+        bottom: 16px;
+        right: 16px;
+        width: 56px;
+        height: 56px;
+      }
+      .agent-fab svg {
+        width: 24px;
+        height: 24px;
+      }
+    }
+
+    /* Overlay when agent is open */
+    .agent-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100vh;
+      background: rgba(0,0,0,.5);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s, visibility 0.3s;
+      z-index: 998;
+    }
+    .agent-overlay.visible {
+      opacity: 1;
+      visibility: visible;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="header">
       <h1>SpaceWatch</h1>
-      <a href="https://github.com/zasghar26/spacewatch" target="_blank" rel="noopener noreferrer" class="github-link">
-        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
-          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
-        </svg>
-        GitHub
-      </a>
     </div>
 
     <!-- METRICS DASHBOARD -->
@@ -349,18 +494,23 @@
     </div>
 
     <!-- CHAT -->
-    <div class="card">
-      <div class="row">
-        <div class="title">Ask the assistant about your Spaces</div>
-        <div class="controls">
-          <button id="sendBtn">Send</button>
-        </div>
+    <!-- Agent Panel (Sliding from Right) -->
+    <div class="agent-overlay" id="agentOverlay"></div>
+    <div class="agent-panel" id="agentPanel">
+      <div class="agent-header">
+        <h2>
+          <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
+          </svg>
+          AI Assistant
+        </h2>
+        <button class="agent-close" id="agentCloseBtn" aria-label="Close assistant">&times;</button>
       </div>
 
-      <div class="grid">
+      <div class="agent-body">
         <div class="chatlog" id="chat"></div>
 
-        <!-- Thinking indicator (hidden until chat request starts) -->
+        <!-- Thinking indicator -->
         <div id="thinking" class="thinkingWrap" style="display:none;">
           <div class="thinkingBar"></div>
           <div class="thinkingText">
@@ -368,18 +518,23 @@
             <span id="thinkingDetail">Calling tools / reasoning</span>
           </div>
         </div>
-
-        <textarea id="input" placeholder="Try: show access logs for testbucket11&#10;Try: show me the largest files in testbucket11"></textarea>
       </div>
 
-      <div class="hint">
-        Example prompts:
-        <br>• List objects in testbucket11
-        <br>• Storage summary for testbucket11
-        <br>• Show access logs for testbucket11
-        <br>• Show IPs from access logs for testbucket11
+      <div class="agent-input-area">
+        <textarea id="input" placeholder="Ask me anything about your Spaces...&#10;&#10;Examples:&#10;• List objects in [bucket-name]&#10;• Storage summary for [bucket-name]&#10;• Show access logs for [bucket-name]"></textarea>
+        <button id="sendBtn">Send Message</button>
+        <div class="agent-hint">
+          <strong>Quick tips:</strong> Ask about buckets, objects, storage usage, access logs, or request metrics.
+        </div>
       </div>
     </div>
+
+    <!-- Floating Action Button -->
+    <button class="agent-fab" id="agentFab" aria-label="Open AI Assistant">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+      </svg>
+    </button>
   </div>
 
 <script>
@@ -429,6 +584,71 @@
   const thinkingDetail = document.getElementById("thinkingDetail");
 
   const ipBarImg = document.getElementById("ipBarImg");
+
+  // Agent panel elements
+  const agentPanel = document.getElementById("agentPanel");
+  const agentFab = document.getElementById("agentFab");
+  const agentCloseBtn = document.getElementById("agentCloseBtn");
+  const agentOverlay = document.getElementById("agentOverlay");
+
+  let autoHideTimer = null;
+
+  function openAgentPanel() {
+    agentPanel.classList.add("open");
+    agentOverlay.classList.add("visible");
+    input.focus();
+    // Clear any existing auto-hide timer when manually opened
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  }
+
+  function closeAgentPanel() {
+    agentPanel.classList.remove("open");
+    agentOverlay.classList.remove("visible");
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  }
+
+  function scheduleAutoHide(delayMs = 10000) {
+    // Auto-hide after 10 seconds of inactivity (after receiving response)
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+    }
+    autoHideTimer = setTimeout(() => {
+      closeAgentPanel();
+    }, delayMs);
+  }
+
+  // Toggle agent panel
+  agentFab.addEventListener("click", () => {
+    if (agentPanel.classList.contains("open")) {
+      closeAgentPanel();
+    } else {
+      openAgentPanel();
+    }
+  });
+
+  agentCloseBtn.addEventListener("click", closeAgentPanel);
+  agentOverlay.addEventListener("click", closeAgentPanel);
+
+  // Cancel auto-hide when user interacts with the panel
+  input.addEventListener("focus", () => {
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  });
+
+  input.addEventListener("input", () => {
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  });
 
   function escapeHtml(s) {
     return String(s)
@@ -879,6 +1099,12 @@
     input.value = "";
     btn.disabled = true;
 
+    // Cancel any pending auto-hide while processing
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+
     // Show thinking progress
     thinking.style.display = "block";
     thinkingDetail.textContent = "Working…";
@@ -902,10 +1128,15 @@
       } else {
         add("ai", data.answer || JSON.stringify(data));
       }
+
+      // Schedule auto-hide after response is shown (10 seconds)
+      scheduleAutoHide(10000);
     } catch (e) {
       thinkingMsg.remove();
       thinking.style.display = "none";
       add("ai", `Network error: ${e}`);
+      // Still schedule auto-hide on error
+      scheduleAutoHide(10000);
     } finally {
       btn.disabled = false;
     }

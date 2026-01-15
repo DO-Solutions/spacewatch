@@ -1206,9 +1206,11 @@ Examples:
         breakdownHtml = "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;'>";
         for (const [opType, stats] of Object.entries(breakdown)) {
           const errorClass = stats.error_rate_percent > 5 ? "color: var(--danger);" : "color: var(--ok);";
+          // Escape HTML to prevent XSS
+          const safeOpType = escapeHtml(opType);
           breakdownHtml += `
             <div style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: rgba(11,18,32,.4);">
-              <div style="font-weight: 600; margin-bottom: 4px;">${opType}</div>
+              <div style="font-weight: 600; margin-bottom: 4px;">${safeOpType}</div>
               <div style="font-size: 11px; line-height: 1.5;">
                 <div>Requests: <strong>${numberToHuman(stats.request_count || 0)}</strong></div>
                 <div>Errors: <strong style="${errorClass}">${stats.error_count || 0} (${(stats.error_rate_percent || 0).toFixed(1)}%)</strong></div>
@@ -1228,7 +1230,7 @@ Examples:
         healthStatus.classList.add("err");
         healthStatus.textContent = "Unhealthy";
       } else if (errorRate > 5) {
-        healthStatus.classList.add("warn");
+        healthStatus.classList.add("warn");  // 'warn' class is defined in the CSS above
         healthStatus.textContent = "Degraded";
       } else {
         healthStatus.classList.add("ok");

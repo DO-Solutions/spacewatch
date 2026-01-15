@@ -308,6 +308,7 @@ class StorageOperationMetrics:
 # Metrics storage for storage operation tracking
 STORAGE_OPERATION_METRICS: List[StorageOperationMetrics] = []
 MAX_STORAGE_METRICS_SAMPLES = 10000  # Keep last 10k storage operations
+MAX_LATENCY_SAMPLES = 10000  # Keep last 10k requests for latency tracking
 
 def record_storage_operation(
     endpoint: str, 

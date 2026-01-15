@@ -57,9 +57,21 @@ from collections import Counter
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import logging
+import psutil
 
 # Load environment variables from .env file
 load_dotenv()
+
+# ============================================================
+# STRUCTURED LOGGING (AWS CloudWatch / Azure Monitor style)
+# ============================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("spacewatch")
 
 
 # ============================================================
@@ -155,6 +167,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================
+# REQUEST METRICS MIDDLEWARE (CloudWatch/Azure Monitor style)
+# ============================================================
+@app.middleware("http")
+async def track_request_metrics(request: Request, call_next):
+    """Middleware to track request latency and performance"""
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        duration_ms = (time.time() - start_time) * 1000
+        
+        # Record metrics
+        record_request_latency(
+            endpoint=request.url.path,
+            method=request.method,
+            duration_ms=duration_ms,
+            status_code=response.status_code
+        )
+        
+        # Add custom headers with metrics (like CloudWatch)
+        response.headers["X-Request-Duration-Ms"] = str(round(duration_ms, 2))
+        response.headers["X-Request-Id"] = request.headers.get("X-Request-Id", str(time.time()))
+        
+        logger.info(
+            f"{request.method} {request.url.path} - {response.status_code} - {duration_ms:.2f}ms"
+        )
+        
+        return response
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"{request.method} {request.url.path} - ERROR - {duration_ms:.2f}ms - {str(e)}")
+        raise
+
 if os.path.isdir("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -206,6 +252,100 @@ STATS = {
     "scheduler_snapshots_ok": 0,
     "scheduler_snapshots_err": 0,
 }
+
+# ============================================================
+# ENHANCED METRICS (CloudWatch/Azure Monitor style)
+# ============================================================
+@dataclass
+class RequestMetrics:
+    """Track request latency and performance metrics"""
+    start_time: float
+    endpoint: str
+    method: str
+    status_code: int = 0
+    duration_ms: float = 0.0
+    
+# Metrics storage for latency tracking
+REQUEST_LATENCIES: List[RequestMetrics] = []
+MAX_LATENCY_SAMPLES = 10000  # Keep last 10k requests
+
+def record_request_latency(endpoint: str, method: str, duration_ms: float, status_code: int):
+    """Record request latency for percentile calculations"""
+    metric = RequestMetrics(
+        start_time=time.time(),
+        endpoint=endpoint,
+        method=method,
+        status_code=status_code,
+        duration_ms=duration_ms
+    )
+    REQUEST_LATENCIES.append(metric)
+    
+    # Keep only recent samples
+    if len(REQUEST_LATENCIES) > MAX_LATENCY_SAMPLES:
+        REQUEST_LATENCIES.pop(0)
+
+def calculate_percentiles(values: List[float], percentiles: List[int] = [50, 95, 99]) -> Dict[str, float]:
+    """Calculate percentiles for latency metrics"""
+    if not values:
+        return {f"p{p}": 0.0 for p in percentiles}
+    
+    sorted_vals = sorted(values)
+    result = {}
+    for p in percentiles:
+        idx = int(len(sorted_vals) * p / 100)
+        if idx >= len(sorted_vals):
+            idx = len(sorted_vals) - 1
+        result[f"p{p}"] = sorted_vals[idx]
+    return result
+
+def get_system_metrics() -> Dict[str, Any]:
+    """Get system health metrics (CPU, memory, disk)"""
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        return {
+            "cpu_percent": cpu_percent,
+            "memory_total_bytes": memory.total,
+            "memory_used_bytes": memory.used,
+            "memory_percent": memory.percent,
+            "disk_total_bytes": disk.total,
+            "disk_used_bytes": disk.used,
+            "disk_percent": disk.percent,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Failed to get system metrics: {e}")
+        return {"error": str(e)}
+
+def get_application_metrics() -> Dict[str, Any]:
+    """Get application-level metrics (request rates, error rates, latencies)"""
+    now = time.time()
+    recent_window = 300  # 5 minutes
+    recent_requests = [r for r in REQUEST_LATENCIES if now - r.start_time <= recent_window]
+    
+    total_requests = len(recent_requests)
+    error_requests = len([r for r in recent_requests if r.status_code >= 400])
+    
+    latencies = [r.duration_ms for r in recent_requests]
+    percentiles = calculate_percentiles(latencies)
+    
+    # Calculate request rate (requests per second)
+    rps = total_requests / recent_window if recent_window > 0 else 0
+    error_rate = (error_requests / total_requests * 100) if total_requests > 0 else 0
+    
+    return {
+        "request_count_5m": total_requests,
+        "error_count_5m": error_requests,
+        "error_rate_percent": round(error_rate, 2),
+        "requests_per_second": round(rps, 2),
+        "latency_p50_ms": round(percentiles.get("p50", 0), 2),
+        "latency_p95_ms": round(percentiles.get("p95", 0), 2),
+        "latency_p99_ms": round(percentiles.get("p99", 0), 2),
+        "avg_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 # ============================================================
 # TOP IPs IMAGE CACHE (performance)
@@ -1049,6 +1189,11 @@ def object_audit_timeline(source_bucket: str, object_key: str, hours: int = 168,
 # ============================================================
 @app.on_event("startup")
 async def startup_scheduler():
+    # Track application start time for uptime metrics
+    app.state.start_time = time.time()
+    logger.info("SpaceWatch application started")
+    logger.info(f"Metrics tracking enabled - tracking last {MAX_LATENCY_SAMPLES} requests")
+    
     if not ENABLE_SCHEDULER:
         return
     if SCHEDULER_LEADER_ID and SCHEDULER_INSTANCE_ID and SCHEDULER_LEADER_ID != SCHEDULER_INSTANCE_ID:
@@ -1075,10 +1220,14 @@ async def startup_scheduler():
                     try:
                         run_metrics_snapshot(b, "")
                         STATS["scheduler_snapshots_ok"] += 1
-                    except Exception:
+                        logger.info(f"Metrics snapshot completed for bucket: {b}")
+                    except Exception as e:
+                        STATS["scheduler_snapshots_err"] += 1
+                        logger.error(f"Metrics snapshot failed for bucket {b}: {e}")
                         traceback.print_exc()
-            except Exception:
+            except Exception as e:
                 STATS["scheduler_snapshots_err"] += 1
+                logger.error(f"Scheduler error: {e}")
                 traceback.print_exc()
 
             await asyncio.sleep(max(60, int(SNAPSHOT_EVERY_SEC)))
@@ -1436,8 +1585,13 @@ def chat(req: ChatRequest, request: Request, x_api_key: Optional[str] = Header(N
 @app.get("/health")
 def health():
     buckets = refresh_bucket_cache()
+    system_metrics = get_system_metrics()
+    app_metrics = get_application_metrics()
+    
     return {
         "ok": True,
+        "status": "healthy",
+        "uptime_seconds": time.time() - app.state.start_time if hasattr(app.state, 'start_time') else 0,
         "spaces_endpoint": SPACES_ENDPOINT,
         "spaces_region": SPACES_REGION,
         "api_key_protection": bool(APP_API_KEY),
@@ -1446,12 +1600,79 @@ def health():
         "fallback_buckets_enabled": bool(FALLBACK_BUCKETS),
         "agent": {"max_steps": AGENT_MAX_STEPS, "max_tool_bytes": AGENT_MAX_TOOL_BYTES},
         "scheduler": {"enabled": ENABLE_SCHEDULER, "every_sec": SNAPSHOT_EVERY_SEC},
+        "system": system_metrics,
+        "application": app_metrics,
+    }
+
+@app.get("/metrics")
+def metrics_endpoint(x_api_key: Optional[str] = Header(None)):
+    """
+    Prometheus-style metrics endpoint for external monitoring systems.
+    Returns application and system metrics in a structured format.
+    """
+    require_api_key(x_api_key)
+    
+    system_metrics = get_system_metrics()
+    app_metrics = get_application_metrics()
+    
+    # Calculate additional stats
+    now = time.time()
+    recent_1h = [r for r in REQUEST_LATENCIES if now - r.start_time <= 3600]
+    
+    # Group by endpoint
+    endpoint_stats = defaultdict(lambda: {"count": 0, "errors": 0, "latencies": []})
+    for r in recent_1h:
+        stats = endpoint_stats[r.endpoint]
+        stats["count"] += 1
+        if r.status_code >= 400:
+            stats["errors"] += 1
+        stats["latencies"].append(r.duration_ms)
+    
+    endpoint_metrics = {}
+    for endpoint, stats in endpoint_stats.items():
+        endpoint_metrics[endpoint] = {
+            "request_count": stats["count"],
+            "error_count": stats["errors"],
+            "error_rate": round(stats["errors"] / stats["count"] * 100, 2) if stats["count"] > 0 else 0,
+            **calculate_percentiles(stats["latencies"])
+        }
+    
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "system": system_metrics,
+        "application": app_metrics,
+        "endpoints": endpoint_metrics,
+        "stats": STATS,
+        "total_requests_tracked": len(REQUEST_LATENCIES)
+    }
+
+@app.get("/logs")
+def logs_endpoint(
+    level: Optional[str] = None,
+    limit: int = 100,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Get recent application logs (CloudWatch Logs style).
+    This is a simple in-memory log viewer - in production, use proper log aggregation.
+    """
+    require_api_key(x_api_key)
+    
+    # For now, return info about logging configuration
+    # In production, you'd integrate with a log aggregation service
+    return {
+        "note": "Logs are written to stdout/stderr. Use a log aggregation service like CloudWatch, Azure Monitor, or ELK stack for production.",
+        "logging_level": logging.getLevelName(logger.level),
+        "log_format": "%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+        "available_levels": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        "recommendation": "Configure external log collection for production use"
     }
 
 @app.get("/stats")
 def stats(x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
-    return STATS
+    app_metrics = get_application_metrics()
+    return {**STATS, **app_metrics}
 
 @app.post("/metrics/snapshot")
 def metrics_snapshot(source_bucket: str, source_prefix: str = "", x_api_key: Optional[str] = Header(None), request: Request = None):

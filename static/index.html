@@ -392,6 +392,60 @@
       <h1>SpaceWatch</h1>
     </div>
 
+    <!-- SYSTEM HEALTH DASHBOARD (AWS CloudWatch / Azure Monitor style) -->
+    <div class="card">
+      <div class="row">
+        <div class="title">System Health & Performance (Real-time)</div>
+        <div class="controls">
+          <button id="refreshHealthBtn">Refresh Health</button>
+          <div class="pill" id="healthStatus">Loading…</div>
+        </div>
+      </div>
+
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">CPU Usage</div>
+          <div id="cpuValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Memory Usage</div>
+          <div id="memoryValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Disk Usage</div>
+          <div id="diskValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Uptime</div>
+          <div id="uptimeValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Requests/sec (5m)</div>
+          <div id="rpsValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Error Rate (5m)</div>
+          <div id="errorRateValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P50</div>
+          <div id="p50Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P95</div>
+          <div id="p95Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: rgba(7,12,24,.35);">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P99</div>
+          <div id="p99Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
+        </div>
+      </div>
+
+      <div class="hint" style="margin-top: 12px;">
+        Real-time metrics updated from <code>/health</code> endpoint. Similar to AWS CloudWatch and Azure Monitor dashboards.
+      </div>
+    </div>
+
     <!-- METRICS DASHBOARD -->
     <div class="card">
       <div class="row">

@@ -974,7 +974,10 @@ Examples:
     // Use colors array references for consistency
     const azureBlue = colors[0];      // Primary Azure Blue
     const awsOrange = colors[1];      // AWS Orange
+    const successGreen = colors[2];   // Success Green
     const azureCyan = colors[3];      // Secondary Azure Cyan
+    const errorRed = colors[4];       // Error Red
+    const neutralGray = colors[5];    // Neutral Gray
 
     if (metricMode === "storage") {
       return {
@@ -983,8 +986,8 @@ Examples:
           { 
             label: `${sourceBucket} (source_bytes)`, 
             data: getSeries("source_bytes"), 
-            backgroundColor: colors[0].bg,
-            borderColor: colors[0].border,
+            backgroundColor: azureBlue.bg,
+            borderColor: azureBlue.border,
             borderWidth: 2 
           },
           { 
@@ -1004,8 +1007,8 @@ Examples:
           { 
             label: "requests_total", 
             data: getSeries("requests_total"), 
-            backgroundColor: colors[0].bg,
-            borderColor: colors[0].border,
+            backgroundColor: azureBlue.bg,
+            borderColor: azureBlue.border,
             borderWidth: 2 
           },
           { 
@@ -1018,8 +1021,8 @@ Examples:
           { 
             label: "PUT", 
             data: getSeries("requests_put"), 
-            backgroundColor: colors[2].bg,
-            borderColor: colors[2].border,
+            backgroundColor: successGreen.bg,
+            borderColor: successGreen.border,
             borderWidth: 2
           },
           { 
@@ -1032,8 +1035,8 @@ Examples:
           { 
             label: "DELETE", 
             data: getSeries("requests_delete"), 
-            backgroundColor: colors[4].bg,
-            borderColor: colors[4].border,
+            backgroundColor: errorRed.bg,
+            borderColor: errorRed.border,
             borderWidth: 2
           }
         ]
@@ -1046,15 +1049,15 @@ Examples:
           { 
             label: "status_4xx", 
             data: getSeries("status_4xx"), 
-            backgroundColor: colors[1].bg,
-            borderColor: colors[1].border,
+            backgroundColor: awsOrange.bg,
+            borderColor: awsOrange.border,
             borderWidth: 2 
           },
           { 
             label: "status_5xx", 
             data: getSeries("status_5xx"), 
-            backgroundColor: colors[4].bg,
-            borderColor: colors[4].border,
+            backgroundColor: errorRed.bg,
+            borderColor: errorRed.border,
             borderWidth: 2
           }
         ]
@@ -1066,8 +1069,8 @@ Examples:
         datasets: [{ 
           label: "bytes_sent", 
           data: getSeries("bytes_sent"), 
-          backgroundColor: colors[2].bg,
-          borderColor: colors[2].border,
+          backgroundColor: successGreen.bg,
+          borderColor: successGreen.border,
           borderWidth: 2 
         }] 
       };
@@ -1078,8 +1081,8 @@ Examples:
       datasets: [{ 
         label: "unique_ips", 
         data: getSeries("unique_ips"), 
-        backgroundColor: colors[0].bg,
-        borderColor: colors[0].border,
+        backgroundColor: azureBlue.bg,
+        borderColor: azureBlue.border,
         borderWidth: 2 
       }] 
     };

@@ -952,15 +952,15 @@ Examples:
     const labels = points.map(p => new Date(p.ts).toLocaleString());
     const getSeries = (k) => points.map(p => Number(p[k] || 0));
 
-    // Color scheme: Blue for info, Green for good, Yellow for warning, Red for errors
-    const blueColor = 'rgba(0, 105, 255, 0.8)';  // DigitalOcean blue for information
-    const blueBorder = 'rgba(0, 105, 255, 1)';
-    const greenColor = 'rgba(0, 208, 132, 0.8)';  // Green for success/good metrics
-    const greenBorder = 'rgba(0, 208, 132, 1)';
-    const yellowColor = 'rgba(255, 176, 32, 0.8)';  // Yellow for warnings
-    const yellowBorder = 'rgba(255, 176, 32, 1)';
-    const redColor = 'rgba(220, 53, 69, 0.8)';  // Red for errors
-    const redBorder = 'rgba(220, 53, 69, 1)';
+    // Traditional color palette for better data visualization
+    const colors = [
+      { bg: 'rgba(54, 162, 235, 0.8)', border: 'rgba(54, 162, 235, 1)' },    // Blue
+      { bg: 'rgba(255, 99, 132, 0.8)', border: 'rgba(255, 99, 132, 1)' },    // Red
+      { bg: 'rgba(75, 192, 192, 0.8)', border: 'rgba(75, 192, 192, 1)' },    // Green
+      { bg: 'rgba(255, 206, 86, 0.8)', border: 'rgba(255, 206, 86, 1)' },    // Yellow
+      { bg: 'rgba(153, 102, 255, 0.8)', border: 'rgba(153, 102, 255, 1)' },  // Purple
+      { bg: 'rgba(255, 159, 64, 0.8)', border: 'rgba(255, 159, 64, 1)' }     // Orange
+    ];
 
     if (metricMode === "storage") {
       return {
@@ -969,15 +969,15 @@ Examples:
           { 
             label: `${sourceBucket} (source_bytes)`, 
             data: getSeries("source_bytes"), 
-            backgroundColor: blueColor,
-            borderColor: blueBorder,
+            backgroundColor: colors[0].bg,
+            borderColor: colors[0].border,
             borderWidth: 2 
           },
           { 
             label: `Access logs (logs_bytes)`, 
             data: getSeries("logs_bytes"), 
-            backgroundColor: blueColor,
-            borderColor: blueBorder,
+            backgroundColor: colors[1].bg,
+            borderColor: colors[1].border,
             borderWidth: 2
           }
         ]
@@ -990,36 +990,36 @@ Examples:
           { 
             label: "requests_total", 
             data: getSeries("requests_total"), 
-            backgroundColor: blueColor,
-            borderColor: blueBorder,
+            backgroundColor: colors[0].bg,
+            borderColor: colors[0].border,
             borderWidth: 2 
           },
           { 
             label: "GET", 
             data: getSeries("requests_get"), 
-            backgroundColor: blueColor,
-            borderColor: blueBorder,
+            backgroundColor: colors[1].bg,
+            borderColor: colors[1].border,
             borderWidth: 2
           },
           { 
             label: "PUT", 
             data: getSeries("requests_put"), 
-            backgroundColor: blueColor,
-            borderColor: blueBorder,
+            backgroundColor: colors[2].bg,
+            borderColor: colors[2].border,
             borderWidth: 2
           },
           { 
             label: "HEAD", 
             data: getSeries("requests_head"), 
-            backgroundColor: blueColor,
-            borderColor: blueBorder,
+            backgroundColor: colors[3].bg,
+            borderColor: colors[3].border,
             borderWidth: 2
           },
           { 
             label: "DELETE", 
             data: getSeries("requests_delete"), 
-            backgroundColor: blueColor,
-            borderColor: blueBorder,
+            backgroundColor: colors[4].bg,
+            borderColor: colors[4].border,
             borderWidth: 2
           }
         ]
@@ -1032,15 +1032,15 @@ Examples:
           { 
             label: "status_4xx", 
             data: getSeries("status_4xx"), 
-            backgroundColor: yellowColor,
-            borderColor: yellowBorder,
+            backgroundColor: colors[3].bg,
+            borderColor: colors[3].border,
             borderWidth: 2 
           },
           { 
             label: "status_5xx", 
             data: getSeries("status_5xx"), 
-            backgroundColor: redColor,
-            borderColor: redBorder,
+            backgroundColor: colors[1].bg,
+            borderColor: colors[1].border,
             borderWidth: 2
           }
         ]
@@ -1052,8 +1052,8 @@ Examples:
         datasets: [{ 
           label: "bytes_sent", 
           data: getSeries("bytes_sent"), 
-          backgroundColor: greenColor,
-          borderColor: greenBorder,
+          backgroundColor: colors[2].bg,
+          borderColor: colors[2].border,
           borderWidth: 2 
         }] 
       };
@@ -1064,8 +1064,8 @@ Examples:
       datasets: [{ 
         label: "unique_ips", 
         data: getSeries("unique_ips"), 
-        backgroundColor: blueColor,
-        borderColor: blueBorder,
+        backgroundColor: colors[0].bg,
+        borderColor: colors[0].border,
         borderWidth: 2 
       }] 
     };

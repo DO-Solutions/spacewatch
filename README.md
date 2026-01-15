@@ -1,6 +1,21 @@
 # SpaceWatch - AI-Driven Observability Backend
 
-SpaceWatch is an AI-driven observability backend for DigitalOcean Spaces (S3-compatible) object storage and access logs.
+SpaceWatch is an AI-driven observability backend for DigitalOcean Spaces (S3-compatible) object storage and access logs, with **AWS S3 and Azure Blob Storage style metrics and logging**.
+
+## Enhanced Features
+
+### Storage Metrics (S3/Azure Blob Style)
+- **Real-time operation tracking**: Monitor storage operations with latency percentiles (P50, P95, P99)
+- **Operation breakdown**: Track GET, PUT, DELETE, HEAD, and LIST operations separately
+- **Error rate monitoring**: Track success/failure rates for storage operations
+- **Data transfer metrics**: Monitor ingress/egress bandwidth in real-time
+- **Structured logging**: S3-style operation logs with correlation IDs and detailed metrics
+
+### Advanced Monitoring
+- **Latency analytics**: Percentile calculations for performance monitoring
+- **Slow operation detection**: Automatic logging of operations exceeding 5 seconds
+- **Operation-level insights**: Per-bucket and per-operation-type analytics
+- **Storage health dashboard**: Real-time health status similar to AWS CloudWatch
 
 ## Quick Start
 
@@ -71,20 +86,35 @@ See `sample.env` for a complete list of optional configuration variables.
 
 ## Features
 
-- AI-driven observability assistant
-- Bucket and object management
-- Access log analysis
-- Metrics snapshots and time series
-- Storage analytics
-- IP tracking and visualization
+- **AI-driven observability assistant**
+- **Real-time storage operation metrics** (S3/Azure Blob style)
+  - Operation latency tracking with percentiles (P50, P95, P99)
+  - Operation breakdown by type (GET, PUT, DELETE, HEAD, LIST)
+  - Error rate monitoring and alerting
+  - Data transfer rate analytics
+- **Structured logging** with operation-level details
+- **Bucket and object management**
+- **Access log analysis**
+- **Metrics snapshots and time series**
+- **Storage analytics** with hot/cold data patterns
+- **IP tracking and visualization**
 
 ## API Endpoints
 
-- `/` - Home page
+### Core Endpoints
+- `/` - Home page with dashboard
 - `/chat` - AI chat interface
-- `/health` - Health check
+- `/health` - Enhanced health check with storage metrics
+
+### Storage Metrics (New!)
+- `/metrics/operations` - Detailed storage operation analytics
+- `/logs/operations` - Storage operation logs (S3 access logs style)
+- `/stats` - Application statistics with storage metrics
+
+### Data Endpoints
 - `/metrics/sources` - List metrics sources
 - `/metrics/series` - Get time series data
+- `/metrics/aggregate-series` - Aggregated metrics across buckets
 - `/tools/*` - Various tool endpoints
 
 See the application code for detailed API documentation.

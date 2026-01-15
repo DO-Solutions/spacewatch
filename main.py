@@ -58,13 +58,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import logging
-import psutil
 
 # Load environment variables from .env file
 load_dotenv()
 
 # ============================================================
-# STRUCTURED LOGGING (AWS CloudWatch / Azure Monitor style)
+# STRUCTURED LOGGING (AWS S3 / Azure Blob style)
 # ============================================================
 logging.basicConfig(
     level=logging.INFO,
@@ -168,37 +167,75 @@ app.add_middleware(
 )
 
 # ============================================================
-# REQUEST METRICS MIDDLEWARE (CloudWatch/Azure Monitor style)
+# STORAGE OPERATION TRACKING MIDDLEWARE (S3/Azure Blob style)
 # ============================================================
 @app.middleware("http")
-async def track_request_metrics(request: Request, call_next):
-    """Middleware to track request latency and performance"""
+async def track_storage_operations(request: Request, call_next):
+    """Middleware to track storage operation latency and performance"""
     start_time = time.time()
+    
+    # Determine operation type based on endpoint
+    operation_type = "UNKNOWN"
+    bucket = None
+    
+    path = request.url.path
+    if "/tools/buckets" in path or "/metrics/sources" in path:
+        operation_type = "LIST_BUCKETS"
+    elif "/tools/list-all" in path or "/tools/storage-summary" in path:
+        operation_type = "LIST_OBJECTS"
+        bucket = request.query_params.get("bucket")
+    elif "/tools/top-largest" in path:
+        operation_type = "ANALYZE_STORAGE"
+        bucket = request.query_params.get("bucket")
+    elif "/chat" in path:
+        operation_type = "AI_QUERY"
+    elif "recent_objects" in path or path.startswith("/metrics/"):
+        operation_type = "QUERY_METRICS"
+    elif "/logs" in path or "access_logs" in path or "search_logs" in path:
+        operation_type = "QUERY_LOGS"
     
     try:
         response = await call_next(request)
         duration_ms = (time.time() - start_time) * 1000
         
-        # Record metrics
-        record_request_latency(
-            endpoint=request.url.path,
+        # Estimate bytes transferred from Content-Length header
+        bytes_transferred = 0
+        if "content-length" in response.headers:
+            try:
+                bytes_transferred = int(response.headers["content-length"])
+            except:
+                pass
+        
+        # Record storage operation metrics
+        record_storage_operation(
+            endpoint=path,
             method=request.method,
+            operation_type=operation_type,
             duration_ms=duration_ms,
-            status_code=response.status_code
+            status_code=response.status_code,
+            bucket=bucket,
+            bytes_transferred=bytes_transferred
         )
         
-        # Add custom headers with metrics (like CloudWatch)
+        # Add custom headers with metrics (like S3 request metrics)
         response.headers["X-Request-Duration-Ms"] = str(round(duration_ms, 2))
-        response.headers["X-Request-Id"] = request.headers.get("X-Request-Id", str(time.time()))
+        response.headers["X-Request-Id"] = request.headers.get("X-Request-Id", f"req-{int(time.time() * 1000)}")
+        response.headers["X-Operation-Type"] = operation_type
         
+        # Structured logging for storage operations
         logger.info(
-            f"{request.method} {request.url.path} - {response.status_code} - {duration_ms:.2f}ms"
+            f"STORAGE_OP: {operation_type} | {request.method} {path} | "
+            f"status={response.status_code} | duration={duration_ms:.2f}ms | "
+            f"bytes={bytes_transferred} | bucket={bucket or 'N/A'}"
         )
         
         return response
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
-        logger.error(f"{request.method} {request.url.path} - ERROR - {duration_ms:.2f}ms - {str(e)}")
+        logger.error(
+            f"STORAGE_OP_ERROR: {operation_type} | {request.method} {path} | "
+            f"duration={duration_ms:.2f}ms | error={str(e)}"
+        )
         raise
 
 if os.path.isdir("static"):
@@ -254,35 +291,56 @@ STATS = {
 }
 
 # ============================================================
-# ENHANCED METRICS (CloudWatch/Azure Monitor style)
+# ENHANCED STORAGE METRICS (S3/Azure Blob style)
 # ============================================================
 @dataclass
-class RequestMetrics:
-    """Track request latency and performance metrics"""
+class StorageOperationMetrics:
+    """Track storage operation latency and performance metrics"""
     start_time: float
     endpoint: str
     method: str
+    operation_type: str  # GET, PUT, DELETE, HEAD, LIST
+    bucket: Optional[str] = None
     status_code: int = 0
     duration_ms: float = 0.0
+    bytes_transferred: int = 0
     
-# Metrics storage for latency tracking
-REQUEST_LATENCIES: List[RequestMetrics] = []
-MAX_LATENCY_SAMPLES = 10000  # Keep last 10k requests
+# Metrics storage for storage operation tracking
+STORAGE_OPERATION_METRICS: List[StorageOperationMetrics] = []
+MAX_STORAGE_METRICS_SAMPLES = 10000  # Keep last 10k storage operations
 
-def record_request_latency(endpoint: str, method: str, duration_ms: float, status_code: int):
-    """Record request latency for percentile calculations"""
-    metric = RequestMetrics(
+def record_storage_operation(
+    endpoint: str, 
+    method: str, 
+    operation_type: str,
+    duration_ms: float, 
+    status_code: int,
+    bucket: Optional[str] = None,
+    bytes_transferred: int = 0
+):
+    """Record storage operation metrics for analytics"""
+    metric = StorageOperationMetrics(
         start_time=time.time(),
         endpoint=endpoint,
         method=method,
+        operation_type=operation_type,
+        bucket=bucket,
         status_code=status_code,
-        duration_ms=duration_ms
+        duration_ms=duration_ms,
+        bytes_transferred=bytes_transferred
     )
-    REQUEST_LATENCIES.append(metric)
+    STORAGE_OPERATION_METRICS.append(metric)
     
     # Keep only recent samples
-    if len(REQUEST_LATENCIES) > MAX_LATENCY_SAMPLES:
-        REQUEST_LATENCIES.pop(0)
+    if len(STORAGE_OPERATION_METRICS) > MAX_STORAGE_METRICS_SAMPLES:
+        STORAGE_OPERATION_METRICS.pop(0)
+    
+    # Log slow operations (like S3 slow request logs)
+    if duration_ms > 5000:  # > 5 seconds
+        logger.warning(
+            f"SLOW_OPERATION: {operation_type} {endpoint} - {duration_ms:.2f}ms - "
+            f"bucket={bucket} status={status_code}"
+        )
 
 def calculate_percentiles(values: List[float], percentiles: List[int] = [50, 95, 99]) -> Dict[str, float]:
     """Calculate percentiles for latency metrics"""
@@ -298,52 +356,60 @@ def calculate_percentiles(values: List[float], percentiles: List[int] = [50, 95,
         result[f"p{p}"] = sorted_vals[idx]
     return result
 
-def get_system_metrics() -> Dict[str, Any]:
-    """Get system health metrics (CPU, memory, disk)"""
-    try:
-        cpu_percent = psutil.cpu_percent(interval=0.1)
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        
-        return {
-            "cpu_percent": cpu_percent,
-            "memory_total_bytes": memory.total,
-            "memory_used_bytes": memory.used,
-            "memory_percent": memory.percent,
-            "disk_total_bytes": disk.total,
-            "disk_used_bytes": disk.used,
-            "disk_percent": disk.percent,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Failed to get system metrics: {e}")
-        return {"error": str(e)}
-
-def get_application_metrics() -> Dict[str, Any]:
-    """Get application-level metrics (request rates, error rates, latencies)"""
+def get_storage_metrics() -> Dict[str, Any]:
+    """Get storage operation metrics (S3/Azure Blob style analytics)"""
     now = time.time()
     recent_window = 300  # 5 minutes
-    recent_requests = [r for r in REQUEST_LATENCIES if now - r.start_time <= recent_window]
+    recent_ops = [op for op in STORAGE_OPERATION_METRICS if now - op.start_time <= recent_window]
     
-    total_requests = len(recent_requests)
-    error_requests = len([r for r in recent_requests if r.status_code >= 400])
+    total_ops = len(recent_ops)
+    error_ops = len([op for op in recent_ops if op.status_code >= 400])
     
-    latencies = [r.duration_ms for r in recent_requests]
-    percentiles = calculate_percentiles(latencies)
+    # Break down by operation type
+    ops_by_type = defaultdict(lambda: {"count": 0, "errors": 0, "latencies": [], "bytes": 0})
+    for op in recent_ops:
+        stats = ops_by_type[op.operation_type]
+        stats["count"] += 1
+        if op.status_code >= 400:
+            stats["errors"] += 1
+        stats["latencies"].append(op.duration_ms)
+        stats["bytes"] += op.bytes_transferred
     
-    # Calculate request rate (requests per second)
-    rps = total_requests / recent_window if recent_window > 0 else 0
-    error_rate = (error_requests / total_requests * 100) if total_requests > 0 else 0
+    # Calculate overall metrics
+    all_latencies = [op.duration_ms for op in recent_ops]
+    percentiles = calculate_percentiles(all_latencies)
+    
+    # Operation breakdown
+    operation_breakdown = {}
+    for op_type, stats in ops_by_type.items():
+        operation_breakdown[op_type] = {
+            "request_count": stats["count"],
+            "error_count": stats["errors"],
+            "error_rate_percent": round(stats["errors"] / stats["count"] * 100, 2) if stats["count"] > 0 else 0,
+            "bytes_transferred": stats["bytes"],
+            **calculate_percentiles(stats["latencies"])
+        }
+    
+    # Calculate operation rate
+    ops_per_second = total_ops / recent_window if recent_window > 0 else 0
+    error_rate = (error_ops / total_ops * 100) if total_ops > 0 else 0
+    
+    # Calculate data transfer metrics
+    total_bytes_transferred = sum(op.bytes_transferred for op in recent_ops)
+    bytes_per_second = total_bytes_transferred / recent_window if recent_window > 0 else 0
     
     return {
-        "request_count_5m": total_requests,
-        "error_count_5m": error_requests,
+        "total_operations_5m": total_ops,
+        "error_operations_5m": error_ops,
         "error_rate_percent": round(error_rate, 2),
-        "requests_per_second": round(rps, 2),
+        "operations_per_second": round(ops_per_second, 2),
+        "total_bytes_transferred_5m": total_bytes_transferred,
+        "bytes_per_second": round(bytes_per_second, 2),
         "latency_p50_ms": round(percentiles.get("p50", 0), 2),
         "latency_p95_ms": round(percentiles.get("p95", 0), 2),
         "latency_p99_ms": round(percentiles.get("p99", 0), 2),
-        "avg_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0,
+        "avg_latency_ms": round(sum(all_latencies) / len(all_latencies), 2) if all_latencies else 0,
+        "operation_breakdown": operation_breakdown,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
@@ -1585,8 +1651,7 @@ def chat(req: ChatRequest, request: Request, x_api_key: Optional[str] = Header(N
 @app.get("/health")
 def health():
     buckets = refresh_bucket_cache()
-    system_metrics = get_system_metrics()
-    app_metrics = get_application_metrics()
+    storage_metrics = get_storage_metrics()
     
     return {
         "ok": True,
@@ -1600,79 +1665,123 @@ def health():
         "fallback_buckets_enabled": bool(FALLBACK_BUCKETS),
         "agent": {"max_steps": AGENT_MAX_STEPS, "max_tool_bytes": AGENT_MAX_TOOL_BYTES},
         "scheduler": {"enabled": ENABLE_SCHEDULER, "every_sec": SNAPSHOT_EVERY_SEC},
-        "system": system_metrics,
-        "application": app_metrics,
+        "storage_metrics": storage_metrics,
     }
 
-@app.get("/metrics")
-def metrics_endpoint(x_api_key: Optional[str] = Header(None)):
+@app.get("/metrics/operations")
+def storage_operations_metrics(x_api_key: Optional[str] = Header(None)):
     """
-    Prometheus-style metrics endpoint for external monitoring systems.
-    Returns application and system metrics in a structured format.
+    Storage operation metrics endpoint (S3/Azure Blob style).
+    Returns detailed storage operation analytics and performance metrics.
     """
     require_api_key(x_api_key)
     
-    system_metrics = get_system_metrics()
-    app_metrics = get_application_metrics()
+    storage_metrics = get_storage_metrics()
     
-    # Calculate additional stats
+    # Calculate additional analytics
     now = time.time()
-    recent_1h = [r for r in REQUEST_LATENCIES if now - r.start_time <= 3600]
+    recent_1h = [op for op in STORAGE_OPERATION_METRICS if now - op.start_time <= 3600]
+    recent_24h = [op for op in STORAGE_OPERATION_METRICS if now - op.start_time <= 86400]
     
-    # Group by endpoint
-    endpoint_stats = defaultdict(lambda: {"count": 0, "errors": 0, "latencies": []})
-    for r in recent_1h:
-        stats = endpoint_stats[r.endpoint]
-        stats["count"] += 1
-        if r.status_code >= 400:
-            stats["errors"] += 1
-        stats["latencies"].append(r.duration_ms)
+    # Bucket-level analytics
+    bucket_stats = defaultdict(lambda: {"operations": 0, "errors": 0, "bytes": 0, "latencies": []})
+    for op in recent_1h:
+        if op.bucket:
+            stats = bucket_stats[op.bucket]
+            stats["operations"] += 1
+            if op.status_code >= 400:
+                stats["errors"] += 1
+            stats["bytes"] += op.bytes_transferred
+            stats["latencies"].append(op.duration_ms)
     
-    endpoint_metrics = {}
-    for endpoint, stats in endpoint_stats.items():
-        endpoint_metrics[endpoint] = {
-            "request_count": stats["count"],
+    bucket_analytics = {}
+    for bucket, stats in bucket_stats.items():
+        bucket_analytics[bucket] = {
+            "operation_count": stats["operations"],
             "error_count": stats["errors"],
-            "error_rate": round(stats["errors"] / stats["count"] * 100, 2) if stats["count"] > 0 else 0,
-            **calculate_percentiles(stats["latencies"])
+            "error_rate": round(stats["errors"] / stats["operations"] * 100, 2) if stats["operations"] > 0 else 0,
+            "bytes_transferred": stats["bytes"],
+            "avg_latency_ms": round(sum(stats["latencies"]) / len(stats["latencies"]), 2) if stats["latencies"] else 0
         }
+    
+    # Time-based trends
+    hour_trend = len(recent_1h)
+    day_trend = len(recent_24h)
     
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "system": system_metrics,
-        "application": app_metrics,
-        "endpoints": endpoint_metrics,
-        "stats": STATS,
-        "total_requests_tracked": len(REQUEST_LATENCIES)
+        "current_5m": storage_metrics,
+        "trends": {
+            "operations_last_1h": hour_trend,
+            "operations_last_24h": day_trend,
+        },
+        "bucket_analytics": bucket_analytics,
+        "total_operations_tracked": len(STORAGE_OPERATION_METRICS)
     }
 
-@app.get("/logs")
-def logs_endpoint(
-    level: Optional[str] = None,
+@app.get("/logs/operations")
+def operation_logs(
+    operation_type: Optional[str] = None,
+    bucket: Optional[str] = None,
     limit: int = 100,
+    min_duration_ms: Optional[float] = None,
     x_api_key: Optional[str] = Header(None)
 ):
     """
-    Get recent application logs (CloudWatch Logs style).
-    This is a simple in-memory log viewer - in production, use proper log aggregation.
+    Get recent storage operation logs (S3 access logs style).
+    Filter by operation type, bucket, or slow operations.
     """
     require_api_key(x_api_key)
     
-    # For now, return info about logging configuration
-    # In production, you'd integrate with a log aggregation service
+    limit = max(1, min(limit, 1000))
+    
+    # Filter operations
+    filtered_ops = STORAGE_OPERATION_METRICS[:]
+    
+    if operation_type:
+        filtered_ops = [op for op in filtered_ops if op.operation_type == operation_type.upper()]
+    
+    if bucket:
+        filtered_ops = [op for op in filtered_ops if op.bucket == bucket]
+    
+    if min_duration_ms:
+        filtered_ops = [op for op in filtered_ops if op.duration_ms >= min_duration_ms]
+    
+    # Sort by most recent first
+    filtered_ops.sort(key=lambda x: x.start_time, reverse=True)
+    filtered_ops = filtered_ops[:limit]
+    
+    # Format logs
+    logs = []
+    for op in filtered_ops:
+        logs.append({
+            "timestamp": datetime.fromtimestamp(op.start_time, tz=timezone.utc).isoformat(),
+            "operation_type": op.operation_type,
+            "method": op.method,
+            "endpoint": op.endpoint,
+            "bucket": op.bucket,
+            "status_code": op.status_code,
+            "duration_ms": round(op.duration_ms, 2),
+            "bytes_transferred": op.bytes_transferred,
+            "success": op.status_code < 400
+        })
+    
     return {
-        "note": "Logs are written to stdout/stderr. Use a log aggregation service like CloudWatch, Azure Monitor, or ELK stack for production.",
-        "logging_level": logging.getLevelName(logger.level),
-        "log_format": "%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-        "available_levels": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        "recommendation": "Configure external log collection for production use"
+        "count": len(logs),
+        "logs": logs,
+        "filters": {
+            "operation_type": operation_type,
+            "bucket": bucket,
+            "min_duration_ms": min_duration_ms
+        },
+        "note": "Storage operation logs in S3 access logs style format"
     }
 
 @app.get("/stats")
 def stats(x_api_key: Optional[str] = Header(None)):
     require_api_key(x_api_key)
-    app_metrics = get_application_metrics()
-    return {**STATS, **app_metrics}
+    storage_metrics = get_storage_metrics()
+    return {**STATS, **storage_metrics}
 
 @app.post("/metrics/snapshot")
 def metrics_snapshot(source_bucket: str, source_prefix: str = "", x_api_key: Optional[str] = Header(None), request: Request = None):

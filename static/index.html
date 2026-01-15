@@ -962,17 +962,19 @@ Examples:
 
     // AWS & Azure standard color palette for data visualization
     const colors = [
-      { bg: 'rgba(0, 115, 187, 0.8)', border: 'rgba(0, 115, 187, 1)' },    // Azure Blue
+      { bg: 'rgba(0, 115, 187, 0.8)', border: 'rgba(0, 115, 187, 1)' },    // Azure Blue (primary)
       { bg: 'rgba(255, 153, 0, 0.8)', border: 'rgba(255, 153, 0, 1)' },    // AWS Orange
       { bg: 'rgba(29, 129, 2, 0.8)', border: 'rgba(29, 129, 2, 1)' },      // Success Green
-      { bg: 'rgba(0, 120, 212, 0.8)', border: 'rgba(0, 120, 212, 1)' },    // Azure Cyan
+      { bg: 'rgba(0, 120, 212, 0.8)', border: 'rgba(0, 120, 212, 1)' },    // Azure Cyan (secondary)
       { bg: 'rgba(209, 50, 18, 0.8)', border: 'rgba(209, 50, 18, 1)' },    // Error Red
       { bg: 'rgba(84, 91, 100, 0.8)', border: 'rgba(84, 91, 100, 1)' }     // Neutral Gray
     ];
 
     // Specific colors for common operations (AWS CloudWatch style)
-    const awsOrange = { bg: 'rgba(255, 153, 0, 0.8)', border: 'rgba(255, 153, 0, 1)' };
-    const azureBlue = { bg: 'rgba(0, 120, 212, 0.8)', border: 'rgba(0, 120, 212, 1)' };
+    // Use colors array references for consistency
+    const azureBlue = colors[0];      // Primary Azure Blue
+    const awsOrange = colors[1];      // AWS Orange
+    const azureCyan = colors[3];      // Secondary Azure Cyan
 
     if (metricMode === "storage") {
       return {
@@ -988,8 +990,8 @@ Examples:
           { 
             label: `Access logs (logs_bytes)`, 
             data: getSeries("logs_bytes"), 
-            backgroundColor: azureBlue.bg,
-            borderColor: azureBlue.border,
+            backgroundColor: azureCyan.bg,
+            borderColor: azureCyan.border,
             borderWidth: 2
           }
         ]
@@ -1023,8 +1025,8 @@ Examples:
           { 
             label: "HEAD", 
             data: getSeries("requests_head"), 
-            backgroundColor: azureBlue.bg,
-            borderColor: azureBlue.border,
+            backgroundColor: azureCyan.bg,
+            borderColor: azureCyan.border,
             borderWidth: 2
           },
           { 

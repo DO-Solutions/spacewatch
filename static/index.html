@@ -253,6 +253,13 @@
         <div class="title">Bucket metrics over time (grid view)</div>
         <div class="controls">
           <select id="bucketSel" title="Source bucket"></select>
+          <select id="timeFrameSel" title="Time frame">
+            <option value="1">1 Hour</option>
+            <option value="6">6 Hours</option>
+            <option value="24" selected>1 Day</option>
+            <option value="168">7 Days</option>
+            <option value="720">30 Days</option>
+          </select>
 
           <!-- Threshold / alert controls -->
 			<div class="thresholdGroup">
@@ -418,6 +425,7 @@
   const chartStatus = document.getElementById("chartStatus");
   const alertPill = document.getElementById("alertPill");
   const bucketSel = document.getElementById("bucketSel");
+  const timeFrameSel = document.getElementById("timeFrameSel");
   const refreshBtn = document.getElementById("refreshBtn");
 
   const thresholdTbEl = document.getElementById("thresholdTb");
@@ -754,12 +762,15 @@
     const saved = localStorage.getItem("spacewatch_bucket");
     if (saved && buckets.includes(saved)) bucketSel.value = saved;
 
+    const savedTimeframe = localStorage.getItem("spacewatch_timeframe");
+    if (savedTimeframe) timeFrameSel.value = savedTimeframe;
+
     applyThresholdUi(bucketSel.value);
     setStatus("ok", `Buckets: ${buckets.length}`);
   }
 
-  async function loadMetricsForBucket(sourceBucket) {
-    const url = `${BASE_URL}/metrics/series?source_bucket=${encodeURIComponent(sourceBucket)}&source_prefix=&limit=500`;
+  async function loadMetricsForBucket(sourceBucket, hours) {
+    const url = `${BASE_URL}/metrics/series?source_bucket=${encodeURIComponent(sourceBucket)}&source_prefix=&limit=500&hours=${hours}`;
     const r = await fetch(url, { headers: headersBase() });
     if (!r.ok) throw new Error(`Metrics request failed (${r.status}). ${await r.text()}`);
     return await r.json();
@@ -804,12 +815,14 @@
   async function refreshMetrics() {
     refreshBtn.disabled = true;
     const b = bucketSel.value;
+    const hours = parseInt(timeFrameSel.value) || 24;
     localStorage.setItem("spacewatch_bucket", b);
+    localStorage.setItem("spacewatch_timeframe", hours.toString());
 
     try {
       setStatus(null, "Loading metrics…");
 
-      const data = await loadMetricsForBucket(b);
+      const data = await loadMetricsForBucket(b, hours);
       const points = Array.isArray(data.points) ? data.points : [];
       if (!points.length) {
         setStatus("err", `No metrics for ${b}`);
@@ -923,6 +936,10 @@
 
   bucketSel.addEventListener("change", async () => {
     applyThresholdUi(bucketSel.value);
+    await refreshMetrics();
+  });
+
+  timeFrameSel.addEventListener("change", async () => {
     await refreshMetrics();
   });
 

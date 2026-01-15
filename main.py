@@ -45,6 +45,7 @@ import httpx
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,6 +57,9 @@ from collections import Counter
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # ============================================================

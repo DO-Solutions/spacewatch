@@ -33,6 +33,8 @@
     }
     .wrap{ max-width: 1140px; margin:0 auto; }
     h1{ margin:0 0 18px; font-size: 36px; letter-spacing: .2px; }
+    .header{ display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+    .header h1{ margin: 0; }
     .card{
       background: linear-gradient(180deg, rgba(15,23,42,.95), rgba(7,12,24,.95));
       border:1px solid var(--border);
@@ -174,7 +176,7 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .msg.ai .bubble{ background: rgba(14,24,44,.75); }
+    .msg.ai .bubble{ background: rgba(20,44,60,.75); border-color: rgba(102,163,255,.3); }
 
     /* Progress bar (indeterminate) */
     .thinkingWrap{
@@ -222,11 +224,173 @@
       background: rgba(34,49,74,.7);
       margin: 10px 0;
     }
+
+    /* Floating Agent Button */
+    .agent-fab {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), #4d8aff);
+      border: 2px solid rgba(102,163,255,.4);
+      box-shadow: 0 8px 24px rgba(102,163,255,.35), 0 2px 8px rgba(0,0,0,.45);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .agent-fab:hover {
+      transform: scale(1.1);
+      box-shadow: 0 12px 32px rgba(102,163,255,.45), 0 4px 12px rgba(0,0,0,.55);
+    }
+    .agent-fab svg {
+      width: 28px;
+      height: 28px;
+      fill: white;
+    }
+
+    /* Agent Panel Sliding from Right */
+    .agent-panel {
+      position: fixed;
+      top: 0;
+      right: -450px;
+      width: 450px;
+      height: 100vh;
+      background: linear-gradient(180deg, rgba(15,23,42,.98), rgba(7,12,24,.98));
+      border-left: 1px solid var(--border);
+      box-shadow: -8px 0 40px rgba(0,0,0,.5);
+      z-index: 999;
+      transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .agent-panel.open {
+      right: 0;
+    }
+
+    .agent-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(11,18,32,.6);
+    }
+    .agent-header h2 {
+      margin: 0;
+      font-size: 20px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .agent-close {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 24px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: all 0.2s;
+      line-height: 1;
+    }
+    .agent-close:hover {
+      background: rgba(255,255,255,.1);
+      color: var(--text);
+    }
+
+    .agent-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .agent-input-area {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      background: rgba(11,18,32,.6);
+    }
+    .agent-input-area textarea {
+      min-height: 80px;
+      margin-bottom: 10px;
+    }
+    .agent-input-area button {
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      border: 1px solid rgba(102,163,255,.5);
+      color: white;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    .agent-input-area button:hover {
+      background: #5599ff;
+      border-color: rgba(102,163,255,.8);
+    }
+    .agent-input-area button:disabled {
+      background: #2d4766;
+      border-color: #243043;
+      color: var(--muted);
+    }
+
+    .agent-hint {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+      margin-top: 8px;
+    }
+
+    /* Mobile Responsive */
+    @media (max-width: 768px) {
+      .agent-panel {
+        width: 100%;
+        right: -100%;
+      }
+      .agent-fab {
+        bottom: 16px;
+        right: 16px;
+        width: 56px;
+        height: 56px;
+      }
+      .agent-fab svg {
+        width: 24px;
+        height: 24px;
+      }
+    }
+
+    /* Overlay when agent is open */
+    .agent-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100vh;
+      background: rgba(0,0,0,.5);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s, visibility 0.3s;
+      z-index: 998;
+    }
+    .agent-overlay.visible {
+      opacity: 1;
+      visibility: visible;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>SpaceWatch</h1>
+    <div class="header">
+      <h1>SpaceWatch</h1>
+    </div>
 
     <!-- METRICS DASHBOARD -->
     <div class="card">
@@ -234,6 +398,13 @@
         <div class="title">Bucket metrics over time (grid view)</div>
         <div class="controls">
           <select id="bucketSel" title="Source bucket"></select>
+          <select id="timeFrameSel" title="Time frame">
+            <option value="1">1 Hour</option>
+            <option value="6">6 Hours</option>
+            <option value="24" selected>1 Day</option>
+            <option value="168">7 Days</option>
+            <option value="720">30 Days</option>
+          </select>
 
           <!-- Threshold / alert controls -->
 			<div class="thresholdGroup">
@@ -330,37 +501,55 @@
     </div>
 
     <!-- CHAT -->
-    <div class="card">
-      <div class="row">
-        <div class="title">Ask the assistant about your Spaces</div>
-        <div class="controls">
-          <button id="sendBtn">Send</button>
-        </div>
+    <!-- Agent Panel (Sliding from Right) -->
+    <div class="agent-overlay" id="agentOverlay"></div>
+    <div class="agent-panel" id="agentPanel">
+      <div class="agent-header">
+        <h2>
+          <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
+          </svg>
+          AI Assistant
+        </h2>
+        <button class="agent-close" id="agentCloseBtn" aria-label="Close assistant">&times;</button>
       </div>
 
-      <div class="grid">
+      <div class="agent-body">
         <div class="chatlog" id="chat"></div>
 
-        <!-- Thinking indicator (hidden until chat request starts) -->
+        <!-- Thinking indicator -->
         <div id="thinking" class="thinkingWrap" style="display:none;">
           <div class="thinkingBar"></div>
           <div class="thinkingText">
-            <span>AI is looking for an answer…</span>
+            <span>SpaceBot is looking for an answer…</span>
             <span id="thinkingDetail">Calling tools / reasoning</span>
           </div>
         </div>
-
-        <textarea id="input" placeholder="Try: show access logs for testbucket11&#10;Try: show me the largest files in testbucket11"></textarea>
       </div>
 
-      <div class="hint">
-        Example prompts:
-        <br>• List objects in testbucket11
-        <br>• Storage summary for testbucket11
-        <br>• Show access logs for testbucket11
-        <br>• Show IPs from access logs for testbucket11
+      <div class="agent-input-area">
+        <textarea id="input" placeholder="Ask me anything about your Spaces...
+
+Examples:
+• List objects in [bucket-name]
+• Storage summary for [bucket-name]
+• Show access logs for [bucket-name]"></textarea>
+        <button id="sendBtn">Send Message</button>
+        <div class="agent-hint">
+          <strong>Quick tips:</strong> Ask about buckets, objects, storage usage, access logs, or request metrics.
+        </div>
       </div>
     </div>
+
+    <!-- Floating Action Button -->
+    <button class="agent-fab" id="agentFab" aria-label="Open AI Assistant">
+      <svg viewBox="0 0 24 24">
+        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+        <circle cx="12" cy="10" r="1.5"/>
+        <circle cx="8" cy="10" r="1.5"/>
+        <circle cx="16" cy="10" r="1.5"/>
+      </svg>
+    </button>
   </div>
 
 <script>
@@ -369,6 +558,7 @@
   // =========================
   const APP_API_KEY = ""; // optional: backend APP_API_KEY
   const BASE_URL = "";    // same origin
+  const AGENT_AUTO_HIDE_DELAY_MS = 10000; // Auto-hide delay after receiving response (10 seconds)
 
   function getSessionId() {
     const k = "spacewatch_session";
@@ -399,6 +589,7 @@
   const chartStatus = document.getElementById("chartStatus");
   const alertPill = document.getElementById("alertPill");
   const bucketSel = document.getElementById("bucketSel");
+  const timeFrameSel = document.getElementById("timeFrameSel");
   const refreshBtn = document.getElementById("refreshBtn");
 
   const thresholdTbEl = document.getElementById("thresholdTb");
@@ -410,6 +601,71 @@
   const thinkingDetail = document.getElementById("thinkingDetail");
 
   const ipBarImg = document.getElementById("ipBarImg");
+
+  // Agent panel elements
+  const agentPanel = document.getElementById("agentPanel");
+  const agentFab = document.getElementById("agentFab");
+  const agentCloseBtn = document.getElementById("agentCloseBtn");
+  const agentOverlay = document.getElementById("agentOverlay");
+
+  let autoHideTimer = null;
+
+  function openAgentPanel() {
+    agentPanel.classList.add("open");
+    agentOverlay.classList.add("visible");
+    input.focus();
+    // Clear any existing auto-hide timer when manually opened
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  }
+
+  function closeAgentPanel() {
+    agentPanel.classList.remove("open");
+    agentOverlay.classList.remove("visible");
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  }
+
+  function scheduleAutoHide(delayMs = AGENT_AUTO_HIDE_DELAY_MS) {
+    // Auto-hide after configured delay of inactivity (after receiving response)
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+    }
+    autoHideTimer = setTimeout(() => {
+      closeAgentPanel();
+    }, delayMs);
+  }
+
+  // Toggle agent panel
+  agentFab.addEventListener("click", () => {
+    if (agentPanel.classList.contains("open")) {
+      closeAgentPanel();
+    } else {
+      openAgentPanel();
+    }
+  });
+
+  agentCloseBtn.addEventListener("click", closeAgentPanel);
+  agentOverlay.addEventListener("click", closeAgentPanel);
+
+  // Cancel auto-hide when user interacts with the panel
+  input.addEventListener("focus", () => {
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  });
+
+  input.addEventListener("input", () => {
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+  });
 
   function escapeHtml(s) {
     return String(s)
@@ -424,7 +680,7 @@
     const div = document.createElement("div");
     div.className = "msg " + (who === "ai" ? "ai" : "me");
     div.innerHTML = `
-      <div class="who">${who === "ai" ? "AI" : "You"}</div>
+      <div class="who">${who === "ai" ? "SpaceBot" : "You"}</div>
       <div class="bubble">${escapeHtml(text)}</div>
     `;
     chat.appendChild(div);
@@ -561,8 +817,20 @@
       return {
         labels,
         datasets: [
-          { label: `${sourceBucket} (source_bytes)`, data: getSeries("source_bytes"), borderWidth: 2 },
-          { label: `Access logs (logs_bytes)`, data: getSeries("logs_bytes"), borderWidth: 2, borderDash: [6,6] }
+          { 
+            label: `${sourceBucket} (source_bytes)`, 
+            data: getSeries("source_bytes"), 
+            backgroundColor: 'rgba(54, 162, 235, 0.7)',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 2 
+          },
+          { 
+            label: `Access logs (logs_bytes)`, 
+            data: getSeries("logs_bytes"), 
+            backgroundColor: 'rgba(75, 192, 192, 0.7)',
+            borderColor: 'rgba(75, 192, 192, 1)',
+            borderWidth: 2
+          }
         ]
       };
     }
@@ -570,11 +838,41 @@
       return {
         labels,
         datasets: [
-          { label: "requests_total", data: getSeries("requests_total"), borderWidth: 2 },
-          { label: "GET", data: getSeries("requests_get"), borderWidth: 2, borderDash: [6,6] },
-          { label: "PUT", data: getSeries("requests_put"), borderWidth: 2, borderDash: [6,6] },
-          { label: "HEAD", data: getSeries("requests_head"), borderWidth: 2, borderDash: [6,6] },
-          { label: "DELETE", data: getSeries("requests_delete"), borderWidth: 2, borderDash: [6,6] }
+          { 
+            label: "requests_total", 
+            data: getSeries("requests_total"), 
+            backgroundColor: 'rgba(54, 162, 235, 0.7)',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 2 
+          },
+          { 
+            label: "GET", 
+            data: getSeries("requests_get"), 
+            backgroundColor: 'rgba(75, 192, 192, 0.7)',
+            borderColor: 'rgba(75, 192, 192, 1)',
+            borderWidth: 2
+          },
+          { 
+            label: "PUT", 
+            data: getSeries("requests_put"), 
+            backgroundColor: 'rgba(153, 102, 255, 0.7)',
+            borderColor: 'rgba(153, 102, 255, 1)',
+            borderWidth: 2
+          },
+          { 
+            label: "HEAD", 
+            data: getSeries("requests_head"), 
+            backgroundColor: 'rgba(255, 206, 86, 0.7)',
+            borderColor: 'rgba(255, 206, 86, 1)',
+            borderWidth: 2
+          },
+          { 
+            label: "DELETE", 
+            data: getSeries("requests_delete"), 
+            backgroundColor: 'rgba(201, 203, 207, 0.7)',
+            borderColor: 'rgba(201, 203, 207, 1)',
+            borderWidth: 2
+          }
         ]
       };
     }
@@ -582,16 +880,46 @@
       return {
         labels,
         datasets: [
-          { label: "status_4xx", data: getSeries("status_4xx"), borderWidth: 2 },
-          { label: "status_5xx", data: getSeries("status_5xx"), borderWidth: 2, borderDash: [6,6] }
+          { 
+            label: "status_4xx", 
+            data: getSeries("status_4xx"), 
+            backgroundColor: 'rgba(255, 159, 64, 0.7)',
+            borderColor: 'rgba(255, 159, 64, 1)',
+            borderWidth: 2 
+          },
+          { 
+            label: "status_5xx", 
+            data: getSeries("status_5xx"), 
+            backgroundColor: 'rgba(255, 99, 132, 0.7)',
+            borderColor: 'rgba(255, 99, 132, 1)',
+            borderWidth: 2
+          }
         ]
       };
     }
     if (metricMode === "bandwidth") {
-      return { labels, datasets: [{ label: "bytes_sent", data: getSeries("bytes_sent"), borderWidth: 2 }] };
+      return { 
+        labels, 
+        datasets: [{ 
+          label: "bytes_sent", 
+          data: getSeries("bytes_sent"), 
+          backgroundColor: 'rgba(54, 162, 235, 0.7)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 2 
+        }] 
+      };
     }
     // unique_ips
-    return { labels, datasets: [{ label: "unique_ips", data: getSeries("unique_ips"), borderWidth: 2 }] };
+    return { 
+      labels, 
+      datasets: [{ 
+        label: "unique_ips", 
+        data: getSeries("unique_ips"), 
+        backgroundColor: 'rgba(75, 192, 192, 0.7)',
+        borderColor: 'rgba(75, 192, 192, 1)',
+        borderWidth: 2 
+      }] 
+    };
   }
 
   function renderChart(metricMode, canvasId, points, sourceBucket) {
@@ -602,7 +930,7 @@
 
     if (!charts[metricMode]) {
       charts[metricMode] = new Chart(ctx, {
-        type: "line",
+        type: "bar",
         data,
         options: {
           responsive: true,
@@ -663,12 +991,15 @@
     const saved = localStorage.getItem("spacewatch_bucket");
     if (saved && buckets.includes(saved)) bucketSel.value = saved;
 
+    const savedTimeframe = localStorage.getItem("spacewatch_timeframe");
+    if (savedTimeframe) timeFrameSel.value = savedTimeframe;
+
     applyThresholdUi(bucketSel.value);
     setStatus("ok", `Buckets: ${buckets.length}`);
   }
 
-  async function loadMetricsForBucket(sourceBucket) {
-    const url = `${BASE_URL}/metrics/series?source_bucket=${encodeURIComponent(sourceBucket)}&source_prefix=&limit=500`;
+  async function loadMetricsForBucket(sourceBucket, hours) {
+    const url = `${BASE_URL}/metrics/series?source_bucket=${encodeURIComponent(sourceBucket)}&source_prefix=&limit=500&hours=${hours}`;
     const r = await fetch(url, { headers: headersBase() });
     if (!r.ok) throw new Error(`Metrics request failed (${r.status}). ${await r.text()}`);
     return await r.json();
@@ -713,12 +1044,14 @@
   async function refreshMetrics() {
     refreshBtn.disabled = true;
     const b = bucketSel.value;
+    const hours = parseInt(timeFrameSel.value) || 24;
     localStorage.setItem("spacewatch_bucket", b);
+    localStorage.setItem("spacewatch_timeframe", hours.toString());
 
     try {
       setStatus(null, "Loading metrics…");
 
-      const data = await loadMetricsForBucket(b);
+      const data = await loadMetricsForBucket(b, hours);
       const points = Array.isArray(data.points) ? data.points : [];
       if (!points.length) {
         setStatus("err", `No metrics for ${b}`);
@@ -788,6 +1121,12 @@
     input.value = "";
     btn.disabled = true;
 
+    // Cancel any pending auto-hide while processing
+    if (autoHideTimer) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = null;
+    }
+
     // Show thinking progress
     thinking.style.display = "block";
     thinkingDetail.textContent = "Working…";
@@ -811,10 +1150,15 @@
       } else {
         add("ai", data.answer || JSON.stringify(data));
       }
+
+      // Schedule auto-hide after response is shown
+      scheduleAutoHide();
     } catch (e) {
       thinkingMsg.remove();
       thinking.style.display = "none";
       add("ai", `Network error: ${e}`);
+      // Still schedule auto-hide on error
+      scheduleAutoHide();
     } finally {
       btn.disabled = false;
     }
@@ -832,6 +1176,10 @@
 
   bucketSel.addEventListener("change", async () => {
     applyThresholdUi(bucketSel.value);
+    await refreshMetrics();
+  });
+
+  timeFrameSel.addEventListener("change", async () => {
     await refreshMetrics();
   });
 

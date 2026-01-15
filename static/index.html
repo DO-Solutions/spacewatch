@@ -27,6 +27,7 @@
       --accentHover:#0052cc;
       --doBlue:#0069ff;
       --doLightBlue:#f0f7ff;
+      --disabled:#ccc;
     }
     body{
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -93,7 +94,7 @@
       justify-content:flex-end;
     }
     select, button, input{
-      background:#ffffff;
+      background:var(--bg);
       color: var(--text);
       border:1px solid var(--border);
       border-radius: 6px;
@@ -159,7 +160,7 @@
       border:1px solid var(--border);
       border-radius: 10px;
       padding: 12px;
-      background: #ffffff;
+      background: var(--bg);
     }
     .chartHead{
       display:flex;
@@ -183,7 +184,7 @@
       resize: vertical;
       border-radius: 6px;
       border:1px solid var(--border);
-      background:#ffffff;
+      background:var(--bg);
       color: var(--text);
       padding:12px 12px;
       font-size: 14px;
@@ -304,7 +305,7 @@
       right: -450px;
       width: 450px;
       height: 100vh;
-      background: #ffffff;
+      background: var(--bg);
       border-left: 1px solid var(--border);
       box-shadow: -4px 0 20px rgba(0,0,0,.1);
       z-index: 999;
@@ -382,8 +383,8 @@
       border-color: var(--accentHover);
     }
     .agent-input-area button:disabled {
-      background: #ccc;
-      border-color: #ccc;
+      background: var(--disabled);
+      border-color: var(--disabled);
       color: var(--muted);
     }
 
@@ -460,42 +461,42 @@
       </div>
 
       <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px;">
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Operations/sec</div>
           <div id="opsPerSecValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Total Operations</div>
           <div id="totalOpsValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Error Rate</div>
           <div id="errorRateValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Data Transfer/sec</div>
           <div id="bytesPerSecValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P50</div>
           <div id="p50Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P95</div>
           <div id="p95Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P99</div>
           <div id="p99Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Avg Latency</div>
           <div id="avgLatencyValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
       </div>
 
       <!-- Operation Breakdown -->
-      <div id="operationBreakdown" style="margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #ffffff;">
+      <div id="operationBreakdown" style="margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
         <div style="font-size: 13px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">Operation Breakdown (by type)</div>
         <div id="operationBreakdownContent" style="font-size: 12px; color: var(--text); line-height: 1.6;">
           Loading operation statistics...

@@ -1291,7 +1291,7 @@ Examples:
           const formattedOpType = formatOperationType(opType);
           const safeOpType = escapeHtml(formattedOpType);
           breakdownHtml += `
-            <div style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: rgba(11,18,32,.4);">
+            <div style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);">
               <div style="font-weight: 600; margin-bottom: 4px;">${safeOpType}</div>
               <div style="font-size: 11px; line-height: 1.5;">
                 <div>Requests: <strong>${numberToHuman(stats.request_count || 0)}</strong></div>

@@ -975,7 +975,7 @@ Examples:
       });
     }
     
-    // For periods beyond 1 day: show date only when day changes
+    // For periods beyond 1 day: show date only
     return date.toLocaleDateString(undefined, { 
       month: 'short', 
       day: 'numeric' 
@@ -986,7 +986,7 @@ Examples:
     const labels = points.map(p => formatChartLabel(p.ts, timeframeHours));
     const getSeries = (k) => points.map(p => Number(p[k] || 0));
 
-    // AWS & Azure standard color palette for data visualization
+    // Standard color palette for data visualization (cloud provider style)
     const colors = [
       { bg: 'rgba(0, 115, 187, 0.8)', border: 'rgba(0, 115, 187, 1)' },    // Azure Blue (primary)
       { bg: 'rgba(255, 153, 0, 0.8)', border: 'rgba(255, 153, 0, 1)' },    // AWS Orange

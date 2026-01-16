@@ -213,7 +213,7 @@ async def track_storage_operations(request: Request, call_next):
         if "content-length" in response.headers:
             try:
                 bytes_transferred = int(response.headers["content-length"])
-            except:
+            except (ValueError, TypeError):
                 pass
         
         # Record storage operation metrics
@@ -1290,22 +1290,22 @@ async def startup_scheduler():
                 if not buckets:
                     ms = metrics_sources_internal(hours=720)
                     buckets = ms.get("sources") or []
-
-                for b in buckets:
-                    if ACCESS_LOGS_BUCKET and b == ACCESS_LOGS_BUCKET:
-                        continue
-                    try:
-                        run_metrics_snapshot(b, "")
-                        STATS["scheduler_snapshots_ok"] += 1
-                        logger.info(f"Metrics snapshot completed for bucket: {b}")
-                    except Exception as e:
-                        STATS["scheduler_snapshots_err"] += 1
-                        logger.error(f"Metrics snapshot failed for bucket {b}: {e}")
-                        traceback.print_exc()
             except Exception as e:
-                STATS["scheduler_snapshots_err"] += 1
-                logger.error(f"Scheduler error: {e}")
+                logger.error(f"Scheduler bucket discovery error: {e}")
                 traceback.print_exc()
+                buckets = []
+
+            for b in buckets:
+                if ACCESS_LOGS_BUCKET and b == ACCESS_LOGS_BUCKET:
+                    continue
+                try:
+                    run_metrics_snapshot(b, "")
+                    STATS["scheduler_snapshots_ok"] += 1
+                    logger.info(f"Metrics snapshot completed for bucket: {b}")
+                except Exception as e:
+                    STATS["scheduler_snapshots_err"] += 1
+                    logger.error(f"Metrics snapshot failed for bucket {b}: {e}")
+                    traceback.print_exc()
 
             await asyncio.sleep(max(60, int(SNAPSHOT_EVERY_SEC)))
 

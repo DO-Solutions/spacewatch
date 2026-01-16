@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
   <style>
-    /* AWS & Azure Standard Color Scheme */
+    /* DigitalOcean-inspired Color Scheme */
     :root{
       --bg:#ffffff;
       --panel:#f2f3f3;
@@ -29,13 +29,18 @@
       --disabled:#aab7b8;
       --awsOrange:#ff9900;
       --azureBlue:#0078d4;
+      --doBlue:#0069ff;
+      --doBlueLight:#e6f0ff;
+      --doBlueDark:#003d99;
     }
     body{
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      background: var(--bg);
+      background: linear-gradient(135deg, #e6f0ff 0%, #f0f7ff 25%, #ffffff 50%, #f0f7ff 75%, #e6f0ff 100%);
+      background-attachment: fixed;
       color: var(--text);
       margin:0;
       padding:40px 18px;
+      min-height: 100vh;
     }
     .wrap{ max-width: 1140px; margin:0 auto; }
     h1{ margin:0 0 18px; font-size: 36px; letter-spacing: .2px; color: var(--text); }
@@ -67,12 +72,13 @@
       fill: currentColor;
     }
     .card{
-      background: var(--panel);
-      border:1px solid var(--border);
+      background: rgba(230, 240, 255, 0.85);
+      border:1px solid rgba(0, 105, 255, 0.2);
       border-radius:12px;
       padding:18px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+      box-shadow: 0 2px 12px rgba(0, 105, 255, 0.15);
       margin-bottom: 16px;
+      backdrop-filter: blur(10px);
     }
     .row{
       display:flex;
@@ -158,10 +164,11 @@
       .chartsGrid{ grid-template-columns: 1fr; }
     }
     .chartCard{
-      border:1px solid var(--border);
+      border:1px solid rgba(0, 105, 255, 0.2);
       border-radius: 10px;
       padding: 12px;
-      background: var(--bg);
+      background: rgba(240, 247, 255, 0.95);
+      box-shadow: 0 1px 6px rgba(0, 105, 255, 0.12);
     }
     .chartHead{
       display:flex;
@@ -467,42 +474,42 @@
       </div>
 
       <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px;">
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Operations/sec</div>
           <div id="opsPerSecValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Total Operations</div>
           <div id="totalOpsValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Error Rate</div>
           <div id="errorRateValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Data Transfer/sec</div>
           <div id="bytesPerSecValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P50</div>
           <div id="p50Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P95</div>
           <div id="p95Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P99</div>
           <div id="p99Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Avg Latency</div>
           <div id="avgLatencyValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
       </div>
 
       <!-- Operation Breakdown -->
-      <div id="operationBreakdown" style="margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+      <div id="operationBreakdown" style="margin-top: 16px; padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
         <div style="font-size: 13px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">Operation Breakdown (by type)</div>
         <div id="operationBreakdownContent" style="font-size: 12px; color: var(--text); line-height: 1.6;">
           Loading operation statistics...
@@ -956,11 +963,37 @@ Examples:
     return (ctx) => `${ctx.dataset.label}: ${numberToHuman(ctx.raw)}`;
   }
 
-  function buildDatasets(points, sourceBucket, metricMode) {
-    const labels = points.map(p => new Date(p.ts).toLocaleString());
+  function formatChartLabel(timestamp, timeframeHours) {
+    // Input validation
+    if (!timestamp) return '—';
+    
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '—';
+    
+    const hours = Number(timeframeHours);
+    if (!Number.isFinite(hours) || hours <= 0) return date.toLocaleString();
+    
+    // For 1 hour, 6 hours, or 1 day (24 hours): show only time
+    if (hours <= 24) {
+      return date.toLocaleTimeString(undefined, { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false 
+      });
+    }
+    
+    // For periods beyond 1 day: show date only
+    return date.toLocaleDateString(undefined, { 
+      month: 'short', 
+      day: 'numeric' 
+    });
+  }
+
+  function buildDatasets(points, sourceBucket, metricMode, timeframeHours) {
+    const labels = points.map(p => formatChartLabel(p.ts, timeframeHours));
     const getSeries = (k) => points.map(p => Number(p[k] || 0));
 
-    // AWS & Azure standard color palette for data visualization
+    // Standard color palette for data visualization (cloud provider style)
     const colors = [
       { bg: 'rgba(0, 115, 187, 0.8)', border: 'rgba(0, 115, 187, 1)' },    // Azure Blue (primary)
       { bg: 'rgba(255, 153, 0, 0.8)', border: 'rgba(255, 153, 0, 1)' },    // AWS Orange
@@ -1088,9 +1121,9 @@ Examples:
     };
   }
 
-  function renderChart(metricMode, canvasId, points, sourceBucket) {
+  function renderChart(metricMode, canvasId, points, sourceBucket, timeframeHours) {
     const ctx = document.getElementById(canvasId).getContext("2d");
-    const data = buildDatasets(points, sourceBucket, metricMode);
+    const data = buildDatasets(points, sourceBucket, metricMode, timeframeHours);
     const yTickFmt = yFormatterForMetric(metricMode);
     const tipFmt = tooltipFormatterForMetric(metricMode);
 
@@ -1222,11 +1255,11 @@ Examples:
       if (!points.length) {
         setStatus("err", `No metrics for ${b}`);
         // render empty charts (keeps UI consistent)
-        renderChart("storage", "chart_storage", [], b);
-        renderChart("requests", "chart_requests", [], b);
-        renderChart("errors", "chart_errors", [], b);
-        renderChart("bandwidth", "chart_bandwidth", [], b);
-        renderChart("unique_ips", "chart_unique_ips", [], b);
+        renderChart("storage", "chart_storage", [], b, hours);
+        renderChart("requests", "chart_requests", [], b, hours);
+        renderChart("errors", "chart_errors", [], b, hours);
+        renderChart("bandwidth", "chart_bandwidth", [], b, hours);
+        renderChart("unique_ips", "chart_unique_ips", [], b, hours);
         ipBarImg.src = "";
         setMeta("storageMeta", "—");
         setMeta("requestsMeta", "—");
@@ -1239,25 +1272,25 @@ Examples:
       }
 
       // Storage
-      renderChart("storage", "chart_storage", points, b);
+      renderChart("storage", "chart_storage", points, b, hours);
       const used = latestUsedBytes(points);
       setMeta("storageMeta", `Latest used: ${bytesToHuman(used)}`);
 
       // Requests
-      renderChart("requests", "chart_requests", points, b);
+      renderChart("requests", "chart_requests", points, b, hours);
       const lastReq = points[points.length - 1];
       setMeta("requestsMeta", `Latest: ${numberToHuman(lastReq.requests_total || 0)}`);
 
       // Errors
-      renderChart("errors", "chart_errors", points, b);
+      renderChart("errors", "chart_errors", points, b, hours);
       setMeta("errorsMeta", `Latest: 4xx=${numberToHuman(lastReq.status_4xx || 0)}  5xx=${numberToHuman(lastReq.status_5xx || 0)}`);
 
       // Bandwidth
-      renderChart("bandwidth", "chart_bandwidth", points, b);
+      renderChart("bandwidth", "chart_bandwidth", points, b, hours);
       setMeta("bandwidthMeta", `Latest: ${bytesToHuman(lastReq.bytes_sent || 0)}`);
 
       // Unique IPs
-      renderChart("unique_ips", "chart_unique_ips", points, b);
+      renderChart("unique_ips", "chart_unique_ips", points, b, hours);
       setMeta("unique_ipsMeta", `Latest: ${numberToHuman(lastReq.unique_ips || 0)}`);
 
       // Top IPs image (server renders)
@@ -1318,7 +1351,7 @@ Examples:
           const formattedOpType = formatOperationType(opType);
           const safeOpType = escapeHtml(formattedOpType);
           breakdownHtml += `
-            <div style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);">
+            <div style="padding: 8px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 6px; background: rgba(240, 247, 255, 0.9);">
               <div style="font-weight: 600; margin-bottom: 4px;">${safeOpType}</div>
               <div style="font-size: 11px; line-height: 1.5;">
                 <div>Requests: <strong>${numberToHuman(stats.request_count || 0)}</strong></div>

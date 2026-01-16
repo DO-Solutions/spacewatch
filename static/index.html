@@ -964,10 +964,17 @@ Examples:
   }
 
   function formatChartLabel(timestamp, timeframeHours) {
+    // Input validation
+    if (!timestamp) return '—';
+    
     const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '—';
+    
+    const hours = Number(timeframeHours);
+    if (!Number.isFinite(hours) || hours <= 0) return date.toLocaleString();
     
     // For 1 hour, 6 hours, or 1 day (24 hours): show only time
-    if (timeframeHours <= 24) {
+    if (hours <= 24) {
       return date.toLocaleTimeString(undefined, { 
         hour: '2-digit', 
         minute: '2-digit',

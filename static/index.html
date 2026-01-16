@@ -72,11 +72,11 @@
       fill: currentColor;
     }
     .card{
-      background: rgba(255, 255, 255, 0.95);
-      border:1px solid rgba(0, 105, 255, 0.15);
+      background: rgba(230, 240, 255, 0.85);
+      border:1px solid rgba(0, 105, 255, 0.2);
       border-radius:12px;
       padding:18px;
-      box-shadow: 0 2px 12px rgba(0, 105, 255, 0.12);
+      box-shadow: 0 2px 12px rgba(0, 105, 255, 0.15);
       margin-bottom: 16px;
       backdrop-filter: blur(10px);
     }
@@ -164,11 +164,11 @@
       .chartsGrid{ grid-template-columns: 1fr; }
     }
     .chartCard{
-      border:1px solid rgba(0, 105, 255, 0.15);
+      border:1px solid rgba(0, 105, 255, 0.2);
       border-radius: 10px;
       padding: 12px;
-      background: rgba(255, 255, 255, 0.98);
-      box-shadow: 0 1px 6px rgba(0, 105, 255, 0.08);
+      background: rgba(240, 247, 255, 0.95);
+      box-shadow: 0 1px 6px rgba(0, 105, 255, 0.12);
     }
     .chartHead{
       display:flex;
@@ -474,42 +474,42 @@
       </div>
 
       <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px;">
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Operations/sec</div>
           <div id="opsPerSecValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Total Operations</div>
           <div id="totalOpsValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Error Rate</div>
           <div id="errorRateValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Data Transfer/sec</div>
           <div id="bytesPerSecValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P50</div>
           <div id="p50Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P95</div>
           <div id="p95Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Latency P99</div>
           <div id="p99Value" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+        <div style="padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
           <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">Avg Latency</div>
           <div id="avgLatencyValue" style="font-size: 22px; font-weight: 600; color: var(--text);">—</div>
         </div>
       </div>
 
       <!-- Operation Breakdown -->
-      <div id="operationBreakdown" style="margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg);">
+      <div id="operationBreakdown" style="margin-top: 16px; padding: 12px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 10px; background: rgba(240, 247, 255, 0.9);">
         <div style="font-size: 13px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">Operation Breakdown (by type)</div>
         <div id="operationBreakdownContent" style="font-size: 12px; color: var(--text); line-height: 1.6;">
           Loading operation statistics...
@@ -1344,7 +1344,7 @@ Examples:
           const formattedOpType = formatOperationType(opType);
           const safeOpType = escapeHtml(formattedOpType);
           breakdownHtml += `
-            <div style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);">
+            <div style="padding: 8px; border: 1px solid rgba(0, 105, 255, 0.25); border-radius: 6px; background: rgba(240, 247, 255, 0.9);">
               <div style="font-weight: 600; margin-bottom: 4px;">${safeOpType}</div>
               <div style="font-size: 11px; line-height: 1.5;">
                 <div>Requests: <strong>${numberToHuman(stats.request_count || 0)}</strong></div>

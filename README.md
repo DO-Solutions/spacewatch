@@ -1,90 +1,92 @@
-# SpaceWatch - AI-Driven Observability Backend
+# SpaceWatch 🚀
 
-SpaceWatch is an AI-driven observability backend for DigitalOcean Spaces (S3-compatible) object storage and access logs.
+AI-powered monitoring for DigitalOcean Spaces with natural language queries, real-time metrics, and access log analysis.
+
+## Features
+
+- **AI Chat Interface**: Query storage using natural language ("Show me the largest files", "Which IP uploaded file.pdf?")
+- **Metrics Dashboard**: Track storage size, requests, bandwidth, and errors over time
+- **Access Log Analysis**: Parse S3 logs to find upload IPs, audit object access, and track events
+- **Storage Alerts**: Browser notifications when thresholds are reached
+- **Automatic Snapshots**: Optional scheduler to capture metrics every 5 minutes
 
 ## Quick Start
 
-### 1. Install Dependencies
-
+1. **Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
-
-Copy the sample environment file and configure your credentials:
-
-```bash
-cp sample.env .env
-```
-
-Edit `.env` and set your actual values:
-
+2. **Configure environment** (copy `sample.env` to `.env`)
 ```bash
 # DigitalOcean Spaces
 SPACES_REGION=sgp1
 SPACES_ENDPOINT=https://sgp1.digitaloceanspaces.com
-SPACES_KEY=your_actual_spaces_access_key
-SPACES_SECRET=your_actual_spaces_secret_key
+SPACES_KEY=your_access_key
+SPACES_SECRET=your_secret_key
 
 # AI Agent (OpenAI-compatible)
-DO_AGENT_URL=https://your-agent-host/v1/chat/completions
-DO_AGENT_KEY=your_actual_agent_api_key
+DO_AGENT_URL=https://api.openai.com/v1/chat/completions
+DO_AGENT_KEY=your_api_key
 
-# Access Logs + Metrics
-ACCESS_LOGS_BUCKET=my-access-logs
+# Optional: Access Logs
+ACCESS_LOGS_BUCKET=my-logs
 ACCESS_LOGS_ROOT_PREFIX=spaces-logs/
-
-METRICS_BUCKET=my-access-logs
-METRICS_PREFIX=spacewatch-metrics/
-
-# App Security (optional but recommended)
-APP_API_KEY=your_api_key_here
 ```
 
-### 3. Run the Application
-
+3. **Run the application**
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Or for development with auto-reload:
+Access the dashboard at `http://localhost:8000`
 
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
+## Usage
 
-## Environment Variables
+### Chat Examples
+- "List objects in my-bucket"
+- "Show me the largest files in prod-assets"
+- "What's the most recently uploaded file?"
+- "Which IP uploaded myfile.pdf?"
 
-The application automatically loads environment variables from a `.env` file in the project root directory.
+### Key API Endpoints
+- `POST /chat` - AI assistant
+- `GET /metrics/series?source_bucket=X&hours=24` - Metrics time series
+- `GET /tools/storage-summary?bucket=X` - Storage stats
+- `GET /health` - System status
+
+## Configuration
 
 ### Required Variables
-
-- `SPACES_KEY` - DigitalOcean Spaces access key
-- `SPACES_SECRET` - DigitalOcean Spaces secret key
-- `DO_AGENT_URL` - OpenAI-compatible chat completions endpoint
-- `DO_AGENT_KEY` - API key for the AI agent
+- `SPACES_REGION`, `SPACES_ENDPOINT`, `SPACES_KEY`, `SPACES_SECRET` - DigitalOcean Spaces credentials
+- `DO_AGENT_URL`, `DO_AGENT_KEY` - OpenAI-compatible API endpoint
 
 ### Optional Variables
+- `ACCESS_LOGS_BUCKET` - Bucket containing S3 access logs
+- `METRICS_BUCKET` - Where to store metrics snapshots (defaults to ACCESS_LOGS_BUCKET)
+- `APP_API_KEY` - Protect endpoints with X-API-Key header
+- `ENABLE_SCHEDULER=true` - Auto-capture metrics every 5 minutes
+- `FALLBACK_BUCKETS=bucket1,bucket2` - If list_buckets permission unavailable
 
-See `sample.env` for a complete list of optional configuration variables.
+See `sample.env` for all options.
 
-## Features
+## Docker Deployment
 
-- AI-driven observability assistant
-- Bucket and object management
-- Access log analysis
-- Metrics snapshots and time series
-- Storage analytics
-- IP tracking and visualization
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY main.py .
+COPY static/ static/
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
 
-## API Endpoints
+```bash
+docker build -t spacewatch .
+docker run -p 8000:8000 --env-file .env spacewatch
+```
 
-- `/` - Home page
-- `/chat` - AI chat interface
-- `/health` - Health check
-- `/metrics/sources` - List metrics sources
-- `/metrics/series` - Get time series data
-- `/tools/*` - Various tool endpoints
+## License
 
-See the application code for detailed API documentation.
+Open source - check with repository owner for details.

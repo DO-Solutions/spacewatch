@@ -1306,6 +1306,19 @@ async def startup_scheduler():
                 STATS["scheduler_snapshots_err"] += 1
                 logger.error(f"Scheduler error: {e}")
                 traceback.print_exc()
+                buckets = []
+
+            for b in buckets:
+                if ACCESS_LOGS_BUCKET and b == ACCESS_LOGS_BUCKET:
+                    continue
+                try:
+                    run_metrics_snapshot(b, "")
+                    STATS["scheduler_snapshots_ok"] += 1
+                    logger.info(f"Metrics snapshot completed for bucket: {b}")
+                except Exception as e:
+                    STATS["scheduler_snapshots_err"] += 1
+                    logger.error(f"Metrics snapshot failed for bucket {b}: {e}")
+                    traceback.print_exc()
 
             await asyncio.sleep(max(60, int(SNAPSHOT_EVERY_SEC)))
 

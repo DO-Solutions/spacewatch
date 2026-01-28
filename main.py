@@ -195,7 +195,9 @@ async def track_storage_operations(request: Request, call_next):
     bucket = None
     
     path = request.url.path
-    if path == "/" or path == "/static/index.html":
+    if path == "/" or path == "/config" or path.endswith("/config.html"):
+        operation_type = "CONFIG_PAGE"
+    elif path == "/dashboard" or path.endswith("/index.html"):
         operation_type = "PAGE_LOAD"
     elif "/static/" in path:
         operation_type = "STATIC_ASSET"

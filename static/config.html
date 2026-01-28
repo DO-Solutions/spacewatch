@@ -248,7 +248,7 @@
           </div>
 
           <div class="form-group">
-            <label>
+            <label for="appApiKey">
               Application API Key
               <span class="label-description">Optional - only required if the server has APP_API_KEY configured</span>
             </label>
@@ -269,7 +269,7 @@
           </div>
 
           <div class="form-group">
-            <label class="label-required">
+            <label for="spacesKey" class="label-required">
               Spaces Access Key
               <span class="label-description">Your DigitalOcean Spaces access key ID</span>
             </label>
@@ -279,12 +279,13 @@
               name="spacesKey" 
               placeholder="DO00XXXXXXXXXXXXX"
               required
+              aria-describedby="spacesKeyError"
             />
-            <div class="error-message" id="spacesKeyError"></div>
+            <div class="error-message" id="spacesKeyError" role="alert" aria-live="polite"></div>
           </div>
 
           <div class="form-group">
-            <label class="label-required">
+            <label for="spacesSecret" class="label-required">
               Spaces Secret Key
               <span class="label-description">Your DigitalOcean Spaces secret access key</span>
             </label>
@@ -294,12 +295,13 @@
               name="spacesSecret" 
               placeholder="Your secret key"
               required
+              aria-describedby="spacesSecretError"
             />
-            <div class="error-message" id="spacesSecretError"></div>
+            <div class="error-message" id="spacesSecretError" role="alert" aria-live="polite"></div>
           </div>
 
           <div class="form-group">
-            <label>
+            <label for="spacesRegion">
               Spaces Region
               <span class="label-description">DigitalOcean Spaces region (e.g., sgp1, nyc3, sfo3)</span>
             </label>
@@ -313,7 +315,7 @@
           </div>
 
           <div class="form-group">
-            <label>
+            <label for="spacesEndpoint">
               Spaces Endpoint URL
               <span class="label-description">Full endpoint URL (auto-generated from region if left empty)</span>
             </label>
@@ -334,7 +336,7 @@
           </div>
 
           <div class="form-group">
-            <label>
+            <label for="logBucket">
               Access Logs Bucket
               <span class="label-description">Bucket name where access logs are stored</span>
             </label>
@@ -347,7 +349,7 @@
           </div>
 
           <div class="form-group">
-            <label>
+            <label for="logPrefix">
               Access Logs Prefix
               <span class="label-description">Prefix/folder path for access logs within the bucket</span>
             </label>
@@ -360,7 +362,7 @@
           </div>
 
           <div class="form-group">
-            <label>
+            <label for="metricsBucket">
               Metrics Bucket
               <span class="label-description">Bucket name for storing metrics snapshots</span>
             </label>
@@ -373,7 +375,7 @@
           </div>
 
           <div class="form-group">
-            <label>
+            <label for="metricsPrefix">
               Metrics Prefix
               <span class="label-description">Prefix/folder path for metrics within the bucket</span>
             </label>

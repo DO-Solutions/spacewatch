@@ -51,7 +51,7 @@ from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from collections import Counter
 
 import matplotlib
@@ -76,19 +76,15 @@ logger = logging.getLogger("spacewatch")
 # ============================================================
 # ENV / CONFIG
 # ============================================================
-SPACES_REGION = os.getenv("SPACES_REGION", "sgp1")
-SPACES_ENDPOINT = os.getenv("SPACES_ENDPOINT", f"https://{SPACES_REGION}.digitaloceanspaces.com")
-SPACES_KEY = os.getenv("SPACES_KEY")
-SPACES_SECRET = os.getenv("SPACES_SECRET")
+# Default region and endpoint - can be overridden per request
+DEFAULT_SPACES_REGION = os.getenv("SPACES_REGION", "sgp1")
+DEFAULT_SPACES_ENDPOINT = os.getenv("SPACES_ENDPOINT", f"https://{DEFAULT_SPACES_REGION}.digitaloceanspaces.com")
 
 DO_AGENT_URL = os.getenv("DO_AGENT_URL")  # must be OpenAI-compatible chat completions endpoint
 DO_AGENT_KEY = os.getenv("DO_AGENT_KEY")
 
-ACCESS_LOGS_BUCKET = os.getenv("ACCESS_LOGS_BUCKET", "").strip()
-ACCESS_LOGS_ROOT_PREFIX = os.getenv("ACCESS_LOGS_ROOT_PREFIX", "").strip()
-
-METRICS_BUCKET = os.getenv("METRICS_BUCKET", "").strip() or ACCESS_LOGS_BUCKET or "logsbucket"
-METRICS_PREFIX = os.getenv("METRICS_PREFIX", "spacewatch-metrics/").strip()
+# NOTE: ACCESS_LOGS_BUCKET and METRICS_BUCKET are no longer global defaults.
+# Users must specify log_bucket and log_prefix per request.
 METRICS_GZIP = os.getenv("METRICS_GZIP", "true").lower() in {"1", "true", "yes"}
 
 # Optional: explicitly tell scheduler which source buckets to snapshot.
@@ -137,21 +133,32 @@ SCHEDULER_INSTANCE_ID = os.getenv("SCHEDULER_INSTANCE_ID", "").strip()
 SCHEDULER_LEADER_ID = os.getenv("SCHEDULER_LEADER_ID", "").strip()
 
 
-if not all([SPACES_KEY, SPACES_SECRET, DO_AGENT_URL, DO_AGENT_KEY]):
-    raise RuntimeError("Missing required env vars: SPACES_KEY, SPACES_SECRET, DO_AGENT_URL, DO_AGENT_KEY")
+if not all([DO_AGENT_URL, DO_AGENT_KEY]):
+    raise RuntimeError("Missing required env vars: DO_AGENT_URL, DO_AGENT_KEY")
 
 
 # ============================================================
-# CLIENTS
+# DYNAMIC S3 CLIENT CREATION
 # ============================================================
-s3 = boto3.client(
-    "s3",
-    region_name=SPACES_REGION,
-    endpoint_url=SPACES_ENDPOINT,
-    aws_access_key_id=SPACES_KEY,
-    aws_secret_access_key=SPACES_SECRET,
-    config=Config(signature_version="s3v4"),
-)
+def create_s3_client(access_key: str, secret_key: str, region: Optional[str] = None, endpoint: Optional[str] = None):
+    """
+    Create an S3 client dynamically with provided user credentials.
+    This allows multi-tenant usage where each request uses its own credentials.
+    """
+    if not access_key or not secret_key:
+        raise HTTPException(status_code=400, detail="Spaces access key and secret key are required")
+    
+    region = region or DEFAULT_SPACES_REGION
+    endpoint = endpoint or DEFAULT_SPACES_ENDPOINT
+    
+    return boto3.client(
+        "s3",
+        region_name=region,
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=Config(signature_version="s3v4"),
+    )
 
 
 # ============================================================
@@ -270,6 +277,14 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ============================================================
 class ChatRequest(BaseModel):
     message: str
+    spaces_key: SecretStr
+    spaces_secret: SecretStr
+    log_bucket: Optional[str] = None  # User's bucket for access logs
+    log_prefix: Optional[str] = ""    # Optional prefix for access logs
+    metrics_bucket: Optional[str] = None  # User's bucket for metrics
+    metrics_prefix: Optional[str] = "spacewatch-metrics/"
+    region: Optional[str] = None
+    endpoint: Optional[str] = None
 
 
 # ============================================================
@@ -481,15 +496,24 @@ _BUCKET_CACHE: Set[str] = set()
 _BUCKET_CACHE_TS: float = 0.0
 _BUCKET_CACHE_LAST_ERROR: Optional[str] = None
 
-def _seed_known_buckets() -> Set[str]:
+def _seed_known_buckets(log_bucket: Optional[str] = None, metrics_bucket: Optional[str] = None) -> Set[str]:
     """
     If list_buckets is not permitted (common with scoped keys),
     allow explicitly configured buckets to still pass require_bucket_allowed().
     """
-    return {b for b in [ACCESS_LOGS_BUCKET, METRICS_BUCKET, *FALLBACK_BUCKETS, *SCHEDULER_SOURCE_BUCKETS] if b}
+    buckets = set()
+    if log_bucket:
+        buckets.add(log_bucket)
+    if metrics_bucket:
+        buckets.add(metrics_bucket)
+    if SCHEDULER_SOURCE_BUCKETS:
+        buckets.update(SCHEDULER_SOURCE_BUCKETS)
+    if FALLBACK_BUCKETS:
+        buckets.update(FALLBACK_BUCKETS)
+    return buckets
 
 
-def refresh_bucket_cache(force: bool = False) -> Set[str]:
+def refresh_bucket_cache(s3_client, force: bool = False, log_bucket: Optional[str] = None, metrics_bucket: Optional[str] = None) -> Set[str]:
     global _BUCKET_CACHE, _BUCKET_CACHE_TS, _BUCKET_CACHE_LAST_ERROR
     now = time.time()
     if not force and _BUCKET_CACHE and (now - _BUCKET_CACHE_TS) < BUCKET_CACHE_TTL_SEC:
@@ -498,10 +522,10 @@ def refresh_bucket_cache(force: bool = False) -> Set[str]:
     STATS["bucket_cache_refreshes"] += 1
     _BUCKET_CACHE_LAST_ERROR = None
     try:
-        resp = s3.list_buckets()
+        resp = s3_client.list_buckets()
         buckets = {b["Name"] for b in resp.get("Buckets", []) if b.get("Name")}
         if not buckets:
-            buckets = _seed_known_buckets()
+            buckets = _seed_known_buckets(log_bucket, metrics_bucket)
         _BUCKET_CACHE = buckets
         _BUCKET_CACHE_TS = now
         return _BUCKET_CACHE
@@ -512,7 +536,7 @@ def refresh_bucket_cache(force: bool = False) -> Set[str]:
 
     # If list_buckets is disallowed, fall back to explicitly configured buckets
     # so require_bucket_allowed() will still work for scoped keys.
-    _BUCKET_CACHE = _seed_known_buckets()
+    _BUCKET_CACHE = _seed_known_buckets(log_bucket, metrics_bucket)
     _BUCKET_CACHE_TS = now
     return _BUCKET_CACHE
 
@@ -520,8 +544,8 @@ def refresh_bucket_cache(force: bool = False) -> Set[str]:
     _BUCKET_CACHE_TS = now
     return _BUCKET_CACHE
 
-def require_bucket_allowed(bucket: str):
-    buckets = refresh_bucket_cache()
+def require_bucket_allowed(bucket: str, s3_client, log_bucket: Optional[str] = None, metrics_bucket: Optional[str] = None):
+    buckets = refresh_bucket_cache(s3_client, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     if not buckets:
         raise HTTPException(
             status_code=403,
@@ -544,9 +568,9 @@ def bytes_to_human(n: int) -> str:
         size /= 1024.0
     return f"{size:.2f} EB"
 
-def list_objects(bucket: str, prefix: str = "", max_items: Optional[int] = None) -> List[Dict[str, Any]]:
-    require_bucket_allowed(bucket)
-    paginator = s3.get_paginator("list_objects_v2")
+def list_objects(s3_client, bucket: str, prefix: str = "", max_items: Optional[int] = None, log_bucket: Optional[str] = None, metrics_bucket: Optional[str] = None) -> List[Dict[str, Any]]:
+    require_bucket_allowed(bucket, s3_client, log_bucket, metrics_bucket)
+    paginator = s3_client.get_paginator("list_objects_v2")
     out: List[Dict[str, Any]] = []
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for o in page.get("Contents", []):
@@ -560,13 +584,13 @@ def list_objects(bucket: str, prefix: str = "", max_items: Optional[int] = None)
                 return out
     return out
 
-def recent_objects(bucket: str, prefix: str = "", limit: int = 10) -> Dict[str, Any]:
+def recent_objects(s3_client, bucket: str, prefix: str = "", limit: int = 10, log_bucket: Optional[str] = None, metrics_bucket: Optional[str] = None) -> Dict[str, Any]:
     """
     Return most recently modified objects.
     NOTE: S3 listing isn't guaranteed to be ordered by last_modified, so we sort.
     """
     limit = max(1, min(int(limit), 200))
-    objs = list_objects(bucket, prefix=prefix)
+    objs = list_objects(s3_client, bucket, prefix=prefix, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     # sort by last_modified ISO string (UTC ISO sorts lexicographically)
     objs.sort(key=lambda x: x.get("last_modified") or "", reverse=True)
     top = objs[:limit]
@@ -643,19 +667,19 @@ def parse_do_s3_access_line(line: str) -> Optional[Dict[str, Any]]:
 # ============================================================
 # METRICS SNAPSHOT STORAGE (JSONL in Spaces)
 # ============================================================
-def _metrics_key_for_ts(ts: datetime) -> str:
+def _metrics_key_for_ts(ts: datetime, metrics_prefix: str = "") -> str:
     dt = ts.strftime("%Y-%m-%d")
     hh = ts.strftime("%H")
-    prefix = normalize_prefix(METRICS_PREFIX)
+    prefix = normalize_prefix(metrics_prefix)
     ext = "jsonl.gz" if METRICS_GZIP else "jsonl"
     return f"{prefix}dt={dt}/hour={hh}/metrics.{ext}"
 
-def _put_metrics_line(bucket: str, key: str, line: str):
-    require_bucket_allowed(bucket)
+def _put_metrics_line(s3_client, bucket: str, key: str, line: str, log_bucket: Optional[str] = None, metrics_bucket: Optional[str] = None):
+    require_bucket_allowed(bucket, s3_client, log_bucket, metrics_bucket)
 
     existing = b""
     try:
-        obj = s3.get_object(Bucket=bucket, Key=key)
+        obj = s3_client.get_object(Bucket=bucket, Key=key)
         existing = obj["Body"].read()
         if METRICS_GZIP and key.endswith(".gz"):
             existing = gzip.decompress(existing)
@@ -666,10 +690,10 @@ def _put_metrics_line(bucket: str, key: str, line: str):
 
     new_payload = existing + (line.rstrip("\n") + "\n").encode("utf-8")
     body = gzip.compress(new_payload) if (METRICS_GZIP and key.endswith(".gz")) else new_payload
-    s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
+    s3_client.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
 
-def storage_summary(bucket: str, prefix: str = "") -> Dict[str, Any]:
-    objs = list_objects(bucket, prefix=prefix)
+def storage_summary(s3_client, bucket: str, prefix: str = "", log_bucket: Optional[str] = None, metrics_bucket: Optional[str] = None) -> Dict[str, Any]:
+    objs = list_objects(s3_client, bucket, prefix=prefix, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     total = sum(o["size_bytes"] for o in objs)
     return {
         "bucket": bucket,
@@ -679,12 +703,12 @@ def storage_summary(bucket: str, prefix: str = "") -> Dict[str, Any]:
         "total_size_human": bytes_to_human(total),
     }
 
-def compute_request_metrics_from_logs(source_bucket: str) -> Dict[str, Any]:
-    if not ACCESS_LOGS_BUCKET:
-        return {"requests_total": 0, "note": "ACCESS_LOGS_BUCKET not set"}
+def compute_request_metrics_from_logs(s3_client, source_bucket: str, log_bucket: Optional[str], log_prefix: str = "") -> Dict[str, Any]:
+    if not log_bucket:
+        return {"requests_total": 0, "note": "log_bucket not set"}
 
-    root = normalize_prefix(ACCESS_LOGS_ROOT_PREFIX)
-    objs = list_objects(ACCESS_LOGS_BUCKET, prefix=root)
+    root = normalize_prefix(log_prefix)
+    objs = list_objects(s3_client, log_bucket, prefix=root, log_bucket=log_bucket, metrics_bucket=None)
 
     src = source_bucket.lower().strip()
     candidates = [o for o in objs if src in o["key"].lower() and looks_like_log_key(o["key"])]
@@ -718,7 +742,7 @@ def compute_request_metrics_from_logs(source_bucket: str) -> Dict[str, Any]:
     for o in candidates:
         key = o["key"]
         try:
-            obj = s3.get_object(Bucket=ACCESS_LOGS_BUCKET, Key=key)
+            obj = s3_client.get_object(Bucket=log_bucket, Key=key)
             raw = obj["Body"].read(MAX_LOG_BYTES + 1)
             if len(raw) > MAX_LOG_BYTES:
                 continue
@@ -769,16 +793,18 @@ def compute_request_metrics_from_logs(source_bucket: str) -> Dict[str, Any]:
     totals["top_ips"] = [{"ip": ip, "count": c} for ip, c in ip_counts.most_common(10)]
     return totals
 
-def run_metrics_snapshot(source_bucket: str, source_prefix: str = "") -> Dict[str, Any]:
-    if not ACCESS_LOGS_BUCKET:
-        raise HTTPException(status_code=400, detail="ACCESS_LOGS_BUCKET not set")
+def run_metrics_snapshot(s3_client, source_bucket: str, source_prefix: str = "", log_bucket: Optional[str] = None, log_prefix: str = "", metrics_bucket: Optional[str] = None, metrics_prefix: str = "") -> Dict[str, Any]:
+    if not log_bucket:
+        raise HTTPException(status_code=400, detail="log_bucket not set")
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="metrics_bucket not set")
 
     ts = datetime.now(timezone.utc)
-    logs_prefix = normalize_prefix(ACCESS_LOGS_ROOT_PREFIX)
+    logs_prefix = normalize_prefix(log_prefix)
 
-    src_summary = storage_summary(bucket=source_bucket, prefix=source_prefix)
+    src_summary = storage_summary(s3_client, bucket=source_bucket, prefix=source_prefix, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
 
-    objs = list_objects(ACCESS_LOGS_BUCKET, prefix=logs_prefix)
+    objs = list_objects(s3_client, log_bucket, prefix=logs_prefix, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     src = source_bucket.lower().strip()
     logs_files = 0
     logs_bytes = 0
@@ -793,16 +819,16 @@ def run_metrics_snapshot(source_bucket: str, source_prefix: str = "") -> Dict[st
         "source_prefix": source_prefix or "",
         "source_objects": int(src_summary["object_count"]),
         "source_bytes": int(src_summary["total_size_bytes"]),
-        "logs_bucket": ACCESS_LOGS_BUCKET,
+        "logs_bucket": log_bucket,
         "logs_prefix": logs_prefix,
         "logs_files": int(logs_files),
         "logs_bytes": int(logs_bytes),
     }
-    record.update(compute_request_metrics_from_logs(source_bucket))
+    record.update(compute_request_metrics_from_logs(s3_client, source_bucket, log_bucket, log_prefix))
 
-    key = _metrics_key_for_ts(ts)
-    _put_metrics_line(METRICS_BUCKET, key, json.dumps(record, separators=(",", ":")))
-    return {"metrics_bucket": METRICS_BUCKET, "metrics_key": key, "record": record}
+    key = _metrics_key_for_ts(ts, metrics_prefix)
+    _put_metrics_line(s3_client, metrics_bucket, key, json.dumps(record, separators=(",", ":")), log_bucket, metrics_bucket)
+    return {"metrics_bucket": metrics_bucket, "metrics_key": key, "record": record}
 
 
 # ============================================================
@@ -810,10 +836,12 @@ def run_metrics_snapshot(source_bucket: str, source_prefix: str = "") -> Dict[st
 # ============================================================
 METRICS_MAX_POINTS = int(os.getenv("METRICS_MAX_POINTS", "2000"))
 
-def metrics_sources_internal(hours: int = 168) -> Dict[str, Any]:
+def metrics_sources_internal(s3_client, metrics_bucket: Optional[str], metrics_prefix: str = "", hours: int = 168, log_bucket: Optional[str] = None) -> Dict[str, Any]:
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="metrics_bucket not set")
     hours = max(1, min(int(hours), 720))
-    metrics_prefix = normalize_prefix(METRICS_PREFIX)
-    objs = list_objects(METRICS_BUCKET, prefix=metrics_prefix)
+    metrics_pfx = normalize_prefix(metrics_prefix)
+    objs = list_objects(s3_client, metrics_bucket, prefix=metrics_pfx, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     objs.sort(key=lambda x: x["last_modified"], reverse=True)
 
     cutoff = datetime.now(timezone.utc).timestamp() - (hours * 3600)
@@ -831,7 +859,7 @@ def metrics_sources_internal(hours: int = 168) -> Dict[str, Any]:
     for o in keep:
         key = o["key"]
         try:
-            obj = s3.get_object(Bucket=METRICS_BUCKET, Key=key)
+            obj = s3_client.get_object(Bucket=metrics_bucket, Key=key)
             raw = obj["Body"].read(MAX_LOG_BYTES + 1)
             if len(raw) > MAX_LOG_BYTES:
                 continue
@@ -852,9 +880,11 @@ def metrics_sources_internal(hours: int = 168) -> Dict[str, Any]:
             continue
 
     out = sorted(sources)
-    return {"count": len(out), "sources": out, "metrics_bucket": METRICS_BUCKET, "metrics_prefix": metrics_prefix}
+    return {"count": len(out), "sources": out, "metrics_bucket": metrics_bucket, "metrics_prefix": metrics_pfx}
 
-def metrics_series_internal(source_bucket: str, source_prefix: str = "", limit: int = 500, hours: int = 168) -> Dict[str, Any]:
+def metrics_series_internal(s3_client, source_bucket: str, metrics_bucket: Optional[str], metrics_prefix: str = "", source_prefix: str = "", limit: int = 500, hours: int = 168, log_bucket: Optional[str] = None) -> Dict[str, Any]:
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="metrics_bucket not set")
     limit = max(1, min(int(limit), METRICS_MAX_POINTS))
     hours = max(1, min(int(hours), 720))
 
@@ -862,8 +892,8 @@ def metrics_series_internal(source_bucket: str, source_prefix: str = "", limit: 
     want_bucket_l = want_bucket.lower()
     want_prefix = (source_prefix or "").strip()
 
-    metrics_prefix = normalize_prefix(METRICS_PREFIX)
-    objs = list_objects(METRICS_BUCKET, prefix=metrics_prefix)
+    metrics_pfx = normalize_prefix(metrics_prefix)
+    objs = list_objects(s3_client, metrics_bucket, prefix=metrics_pfx, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     objs.sort(key=lambda x: x["last_modified"], reverse=True)
 
     cutoff = datetime.now(timezone.utc).timestamp() - (hours * 3600)
@@ -881,7 +911,7 @@ def metrics_series_internal(source_bucket: str, source_prefix: str = "", limit: 
     for o in reversed(keep):
         key = o["key"]
         try:
-            obj = s3.get_object(Bucket=METRICS_BUCKET, Key=key)
+            obj = s3_client.get_object(Bucket=metrics_bucket, Key=key)
             raw = obj["Body"].read(MAX_LOG_BYTES + 1)
             if len(raw) > MAX_LOG_BYTES:
                 continue
@@ -917,6 +947,13 @@ def metrics_series_internal(source_bucket: str, source_prefix: str = "", limit: 
 @app.get("/metrics/sources")
 def http_metrics_sources(
     hours: int = 168,
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    metrics_prefix: Optional[str] = Header(None, alias="X-Metrics-Prefix"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),
     request: Request = None,
 ):
@@ -927,7 +964,12 @@ def http_metrics_sources(
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
-    return metrics_sources_internal(hours=hours)
+    
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="X-Metrics-Bucket header required")
+    
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
+    return metrics_sources_internal(s3_client, metrics_bucket, metrics_prefix or "", hours=hours, log_bucket=log_bucket)
 
 
 @app.get("/metrics/series")
@@ -936,6 +978,13 @@ def http_metrics_series(
     source_prefix: str = "",
     limit: int = 500,
     hours: int = 168,
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    metrics_prefix: Optional[str] = Header(None, alias="X-Metrics-Prefix"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),
     request: Request = None,
 ):
@@ -945,17 +994,33 @@ def http_metrics_series(
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
+    
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="X-Metrics-Bucket header required")
+    
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
     return metrics_series_internal(
+        s3_client=s3_client,
         source_bucket=source_bucket,
+        metrics_bucket=metrics_bucket,
+        metrics_prefix=metrics_prefix or "",
         source_prefix=source_prefix,
         limit=limit,
         hours=hours,
+        log_bucket=log_bucket,
     )
 
 
 @app.get("/metrics/aggregate-series")
 def http_metrics_aggregate_series(
     hours: int = 24,
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    metrics_prefix: Optional[str] = Header(None, alias="X-Metrics-Prefix"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),
     request: Request = None,
 ):
@@ -967,11 +1032,16 @@ def http_metrics_aggregate_series(
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
+    
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="X-Metrics-Bucket header required")
 
     hours = max(1, min(int(hours), 168))  # cap at 7 days
+    
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
 
     # Discover buckets from snapshots, then pull series per bucket and aggregate by ts.
-    srcs = metrics_sources_internal(hours=hours).get("sources") or []
+    srcs = metrics_sources_internal(s3_client, metrics_bucket, metrics_prefix or "", hours=hours, log_bucket=log_bucket).get("sources") or []
     agg: Dict[str, Dict[str, int]] = defaultdict(lambda: {
         "source_bytes": 0,
         "logs_bytes": 0,
@@ -984,7 +1054,7 @@ def http_metrics_aggregate_series(
     })
 
     for b in srcs:
-        series = metrics_series_internal(source_bucket=b, source_prefix="", hours=hours, limit=2000)
+        series = metrics_series_internal(s3_client, source_bucket=b, metrics_bucket=metrics_bucket, metrics_prefix=metrics_prefix or "", source_prefix="", hours=hours, limit=2000, log_bucket=log_bucket)
         for rec in series.get("points", []):
             ts = rec.get("ts")
             if not ts:
@@ -1014,15 +1084,22 @@ def http_metrics_aggregate_series(
 # ============================================================
 @app.get("/tools/buckets")
 def tool_buckets(
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),
     request: Request = None,
 ):
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
-    STATS["tool_requests"] = 1
+    STATS["tool_requests"] += 1
 
-    buckets = sorted(list(refresh_bucket_cache(force=True)))
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
+    buckets = sorted(list(refresh_bucket_cache(s3_client, force=True, log_bucket=log_bucket, metrics_bucket=metrics_bucket)))
     if not buckets:
         raise HTTPException(
             status_code=403,
@@ -1038,28 +1115,44 @@ def tool_buckets(
 def tool_storage_summary(
     bucket: str,
     prefix: str = "",
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),
     request: Request = None,
 ):
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
-    STATS["tool_requests"] = 1
-    return storage_summary(bucket, prefix)
+    STATS["tool_requests"] += 1
+    
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
+    return storage_summary(s3_client, bucket, prefix, log_bucket, metrics_bucket)
 
 
 @app.get("/tools/list-all")
 def tool_list_all(
     bucket: str,
     prefix: str = "",
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),
     request: Request = None,
 ):
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
-    STATS["tool_requests"] = 1
-    objs = list_objects(bucket, prefix=prefix)
+    STATS["tool_requests"] += 1
+    
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
+    objs = list_objects(s3_client, bucket, prefix=prefix, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     return {
         "bucket": bucket,
         "prefix": prefix,
@@ -1074,15 +1167,23 @@ def tool_top_largest(
     bucket: str,
     limit: int = 10,
     prefix: str = "",
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),
     request: Request = None,
 ):
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
-    STATS["tool_requests"] = 1
+    STATS["tool_requests"] += 1
     limit = max(1, min(int(limit), MAX_TOP_LARGEST))
-    objs = list_objects(bucket, prefix=prefix)
+    
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
+    objs = list_objects(s3_client, bucket, prefix=prefix, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     objs.sort(key=lambda x: x["size_bytes"], reverse=True)
     return {"bucket": bucket, "prefix": prefix, "limit": limit, "objects": objs[:limit]}
 
@@ -1091,9 +1192,9 @@ def tool_top_largest(
 # ============================================================
 # LOGS: list/read/search + object audit timeline
 # ============================================================
-def read_log_object(bucket: str, key: str, tail_lines: int = 200) -> Dict[str, Any]:
-    require_bucket_allowed(bucket)
-    obj = s3.get_object(Bucket=bucket, Key=key)
+def read_log_object(s3_client, bucket: str, key: str, tail_lines: int = 200, log_bucket: Optional[str] = None, metrics_bucket: Optional[str] = None) -> Dict[str, Any]:
+    require_bucket_allowed(bucket, s3_client, log_bucket, metrics_bucket)
+    obj = s3_client.get_object(Bucket=bucket, Key=key)
     raw = obj["Body"].read(MAX_LOG_BYTES + 1)
     if len(raw) > MAX_LOG_BYTES:
         raise HTTPException(status_code=413, detail="Log file too large")
@@ -1103,11 +1204,11 @@ def read_log_object(bucket: str, key: str, tail_lines: int = 200) -> Dict[str, A
     lines = safe_tail_lines(text, min(int(tail_lines), MAX_LOG_LINES))
     return {"bucket": bucket, "key": key, "returned_lines": len(lines), "log_lines": lines}
 
-def list_access_log_objects_for_source(source_bucket: str, date_yyyy_mm_dd: Optional[str] = None, max_items: int = 200) -> List[Dict[str, Any]]:
-    if not ACCESS_LOGS_BUCKET:
-        raise HTTPException(status_code=400, detail="ACCESS_LOGS_BUCKET not set")
-    root = normalize_prefix(ACCESS_LOGS_ROOT_PREFIX)
-    objs = list_objects(ACCESS_LOGS_BUCKET, prefix=root)
+def list_access_log_objects_for_source(s3_client, source_bucket: str, log_bucket: Optional[str], log_prefix: str = "", date_yyyy_mm_dd: Optional[str] = None, max_items: int = 200, metrics_bucket: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not log_bucket:
+        raise HTTPException(status_code=400, detail="log_bucket not set")
+    root = normalize_prefix(log_prefix)
+    objs = list_objects(s3_client, log_bucket, prefix=root, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
     src = source_bucket.lower().strip()
     out = []
     for o in objs:
@@ -1120,18 +1221,22 @@ def list_access_log_objects_for_source(source_bucket: str, date_yyyy_mm_dd: Opti
     return out[:max(1, min(int(max_items), 500))]
 
 def search_access_logs(
+    s3_client,
     source_bucket: str,
+    log_bucket: Optional[str],
+    log_prefix: str = "",
     contains: Optional[str] = None,
     method: Optional[str] = None,
     object_key: Optional[str] = None,
     status_prefix: Optional[str] = None,  # "2","4","5"
     date_yyyy_mm_dd: Optional[str] = None,
     limit_matches: int = 20,
+    metrics_bucket: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Searches .log/.log.gz for matches. Returns parsed matches with ip/method/status/ts and the log object ref.
     """
-    candidates = list_access_log_objects_for_source(source_bucket, date_yyyy_mm_dd=date_yyyy_mm_dd, max_items=MAX_LOG_FILES_SCAN)
+    candidates = list_access_log_objects_for_source(s3_client, source_bucket, log_bucket, log_prefix, date_yyyy_mm_dd=date_yyyy_mm_dd, max_items=MAX_LOG_FILES_SCAN, metrics_bucket=metrics_bucket)
     want_method = (method or "").upper().strip() or None
     want_contains = contains
     want_key = object_key
@@ -1146,7 +1251,7 @@ def search_access_logs(
     for o in candidates:
         log_key = o["key"]
         try:
-            obj = s3.get_object(Bucket=ACCESS_LOGS_BUCKET, Key=log_key)
+            obj = s3_client.get_object(Bucket=log_bucket, Key=log_key)
             raw = obj["Body"].read(MAX_LOG_BYTES + 1)
             if len(raw) > MAX_LOG_BYTES:
                 continue
@@ -1179,7 +1284,7 @@ def search_access_logs(
                     "method": parsed.get("method"),
                     "status": parsed.get("status"),
                     "bytes_sent": parsed.get("bytes_sent"),
-                    "log_object": {"bucket": ACCESS_LOGS_BUCKET, "key": log_key},
+                    "log_object": {"bucket": log_bucket, "key": log_key},
                     "raw": parsed.get("raw", "")[:3000],
                 })
 
@@ -1207,7 +1312,7 @@ def search_access_logs(
         "note": "Matches are best-effort based on scanned recent log files.",
     }
 
-def object_audit_timeline(source_bucket: str, object_key: str, hours: int = 168, limit: int = 50, methods: Optional[List[str]] = None) -> Dict[str, Any]:
+def object_audit_timeline(s3_client, source_bucket: str, object_key: str, log_bucket: Optional[str], log_prefix: str = "", hours: int = 168, limit: int = 50, methods: Optional[List[str]] = None, metrics_bucket: Optional[str] = None) -> Dict[str, Any]:
     """
     CloudTrail-ish timeline for a specific object:
     - searches access logs for that object key across recent files
@@ -1221,10 +1326,14 @@ def object_audit_timeline(source_bucket: str, object_key: str, hours: int = 168,
     matches_all: List[Dict[str, Any]] = []
     for m in methods:
         res = search_access_logs(
+            s3_client=s3_client,
             source_bucket=source_bucket,
+            log_bucket=log_bucket,
+            log_prefix=log_prefix,
             method=m,
             object_key=object_key,
             limit_matches=max(20, min(200, limit)),
+            metrics_bucket=metrics_bucket,
         )
         matches_all.extend(res.get("matches", []))
 
@@ -1271,58 +1380,11 @@ async def startup_scheduler():
     logger.info("SpaceWatch application started")
     logger.info(f"Metrics tracking enabled - tracking last {MAX_LATENCY_SAMPLES} requests")
     
-    if not ENABLE_SCHEDULER:
+    # Scheduler disabled in multi-tenant mode (no global credentials)
+    if ENABLE_SCHEDULER:
+        logger.warning("Scheduler is enabled but cannot run in multi-tenant mode (no global credentials). Set ENABLE_SCHEDULER=false to suppress this warning.")
+        # The scheduler would need per-tenant credentials to work, which we don't have globally
         return
-    if SCHEDULER_LEADER_ID and SCHEDULER_INSTANCE_ID and SCHEDULER_LEADER_ID != SCHEDULER_INSTANCE_ID:
-        return
-
-    async def loop():
-        while True:
-            STATS["scheduler_runs"] += 1
-            try:
-                # Priority order:
-                # 1) Explicit SCHEDULER_SOURCE_BUCKETS (doesn't require list_buckets)
-                # 2) Bucket cache (list_buckets OR seeded known buckets)
-                # 3) Discover from existing snapshots
-                buckets = list(SCHEDULER_SOURCE_BUCKETS)
-                if not buckets:
-                    buckets = sorted(list(refresh_bucket_cache()))
-                if not buckets:
-                    ms = metrics_sources_internal(hours=720)
-                    buckets = ms.get("sources") or []
-
-                for b in buckets:
-                    if ACCESS_LOGS_BUCKET and b == ACCESS_LOGS_BUCKET:
-                        continue
-                    try:
-                        run_metrics_snapshot(b, "")
-                        STATS["scheduler_snapshots_ok"] += 1
-                        logger.info(f"Metrics snapshot completed for bucket: {b}")
-                    except Exception as e:
-                        STATS["scheduler_snapshots_err"] += 1
-                        logger.error(f"Metrics snapshot failed for bucket {b}: {e}")
-                        traceback.print_exc()
-            except Exception as e:
-                STATS["scheduler_snapshots_err"] += 1
-                logger.error(f"Scheduler error: {e}")
-                traceback.print_exc()
-                buckets = []
-
-            for b in buckets:
-                if ACCESS_LOGS_BUCKET and b == ACCESS_LOGS_BUCKET:
-                    continue
-                try:
-                    run_metrics_snapshot(b, "")
-                    STATS["scheduler_snapshots_ok"] += 1
-                    logger.info(f"Metrics snapshot completed for bucket: {b}")
-                except Exception as e:
-                    STATS["scheduler_snapshots_err"] += 1
-                    logger.error(f"Metrics snapshot failed for bucket {b}: {e}")
-                    traceback.print_exc()
-
-            await asyncio.sleep(max(60, int(SNAPSHOT_EVERY_SEC)))
-
-    asyncio.create_task(loop())
 
 
 # ============================================================
@@ -1410,117 +1472,142 @@ def _tool_ok(data: Any) -> Dict[str, Any]:
     return {"ok": True, "data": data}
 
 
-# Tool Registry (primitives; AI composes answers from these)
-TOOLS: Dict[str, Dict[str, Any]] = {
-    "buckets": {
-        "description": "List allowed Spaces buckets. If permission fails, use metrics_sources instead.",
-        "args_schema": {},
-        "fn": lambda args: {"bucket_count": len(refresh_bucket_cache(force=True)), "buckets": sorted(list(refresh_bucket_cache(force=True)))},
-    },
-    "list_objects": {
-        "description": "List objects in a bucket/prefix. Use max_items to keep it small.",
-        "args_schema": {"bucket": "string", "prefix": "string(optional)", "max_items": "int(optional)"},
-        "fn": lambda args: list_objects(str(args["bucket"]), prefix=str(args.get("prefix") or ""), max_items=int(args.get("max_items") or MAX_LIST_OBJECTS_RETURN)),
-    },
-    "recent_objects": {
-        "description": "Return most recently modified objects (sorted by last_modified).",
-        "args_schema": {"bucket": "string", "prefix": "string(optional)", "limit": "int(optional)"},
-        "fn": lambda args: recent_objects(str(args["bucket"]), prefix=str(args.get("prefix") or ""), limit=int(args.get("limit") or 10)),
-    },
-    "storage_summary": {
-        "description": "Total bytes/objects for a bucket/prefix.",
-        "args_schema": {"bucket": "string", "prefix": "string(optional)"},
-        "fn": lambda args: storage_summary(str(args["bucket"]), prefix=str(args.get("prefix") or "")),
-    },
-    "top_largest": {
-        "description": "Largest objects by size for a bucket/prefix.",
-        "args_schema": {"bucket": "string", "prefix": "string(optional)", "limit": "int(optional)"},
-        "fn": lambda args: (
-            lambda bucket, prefix, limit: (
-                lambda objs: {"bucket": bucket, "prefix": prefix, "limit": limit, "objects": objs[:limit]}
-            )(
-                sorted(list_objects(bucket, prefix=prefix), key=lambda x: x["size_bytes"], reverse=True)
-            )
-        )(str(args["bucket"]), str(args.get("prefix") or ""), max(1, min(int(args.get("limit") or 10), MAX_TOP_LARGEST))),
-    },
-
-    "snapshot": {
-        "description": "Write a metrics snapshot for a source bucket into METRICS_BUCKET (storage + request stats from logs).",
-        "args_schema": {"source_bucket": "string", "source_prefix": "string(optional)"},
-        "fn": lambda args: run_metrics_snapshot(str(args["source_bucket"]), str(args.get("source_prefix") or "")),
-    },
-    "metrics_sources": {
-        "description": "Discover source buckets by scanning stored snapshots in METRICS_BUCKET/METRICS_PREFIX.",
-        "args_schema": {"hours": "int(optional)"},
-        "fn": lambda args: metrics_sources_internal(hours=int(args.get("hours") or 720)),
-    },
-    "metrics_series": {
-        "description": "Get time series snapshot points for a source bucket/prefix.",
-        "args_schema": {"source_bucket": "string", "source_prefix": "string(optional)", "hours": "int(optional)", "limit": "int(optional)"},
-        "fn": lambda args: metrics_series_internal(
-            source_bucket=str(args["source_bucket"]),
-            source_prefix=str(args.get("source_prefix") or ""),
-            hours=int(args.get("hours") or 720),
-            limit=int(args.get("limit") or 500),
-        ),
-    },
-
-    "list_access_logs": {
-        "description": "List log objects (.log/.log.gz) for a source bucket in ACCESS_LOGS_BUCKET.",
-        "args_schema": {"source_bucket": "string", "date_yyyy_mm_dd": "string(optional)", "max_items": "int(optional)"},
-        "fn": lambda args: list_access_log_objects_for_source(
-            str(args["source_bucket"]),
-            date_yyyy_mm_dd=args.get("date_yyyy_mm_dd"),
-            max_items=int(args.get("max_items") or 50),
-        ),
-    },
-    "read_log": {
-        "description": "Read tail of a log object (supports .gz). Provide bucket+key.",
-        "args_schema": {"bucket": "string", "key": "string", "tail_lines": "int(optional)"},
-        "fn": lambda args: read_log_object(str(args["bucket"]), str(args["key"]), int(args.get("tail_lines") or 200)),
-    },
-    "search_logs": {
-        "description": "Search access logs for a bucket with filters: method/object_key/status_prefix/contains (supports .gz).",
-        "args_schema": {
-            "source_bucket": "string",
-            "contains": "string(optional)",
-            "method": "string(optional)",
-            "object_key": "string(optional)",
-            "status_prefix": "string(optional)",
-            "date_yyyy_mm_dd": "string(optional)",
-            "limit_matches": "int(optional)",
+def _build_tools(ctx: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Build tool registry with context (s3_client, buckets, prefixes)"""
+    s3 = ctx["s3_client"]
+    log_bucket = ctx.get("log_bucket")
+    log_prefix = ctx.get("log_prefix", "")
+    metrics_bucket = ctx.get("metrics_bucket")
+    metrics_prefix = ctx.get("metrics_prefix", "")
+    
+    return {
+        "buckets": {
+            "description": "List allowed Spaces buckets. If permission fails, use metrics_sources instead.",
+            "args_schema": {},
+            "fn": lambda args: {"bucket_count": len(refresh_bucket_cache(s3, force=True, log_bucket=log_bucket, metrics_bucket=metrics_bucket)), "buckets": sorted(list(refresh_bucket_cache(s3, force=True, log_bucket=log_bucket, metrics_bucket=metrics_bucket)))},
         },
-        "fn": lambda args: search_access_logs(
-            source_bucket=str(args["source_bucket"]),
-            contains=args.get("contains"),
-            method=args.get("method"),
-            object_key=args.get("object_key"),
-            status_prefix=args.get("status_prefix"),
-            date_yyyy_mm_dd=args.get("date_yyyy_mm_dd"),
-            limit_matches=int(args.get("limit_matches") or 20),
-        ),
-    },
-    "object_audit": {
-        "description": "CloudTrail-ish event timeline for an object (find upload IP via PUT).",
-        "args_schema": {
-            "source_bucket": "string",
-            "object_key": "string",
-            "hours": "int(optional)",
-            "limit": "int(optional)",
-            "methods": "list(optional)",
+        "list_objects": {
+            "description": "List objects in a bucket/prefix. Use max_items to keep it small.",
+            "args_schema": {"bucket": "string", "prefix": "string(optional)", "max_items": "int(optional)"},
+            "fn": lambda args: list_objects(s3, str(args["bucket"]), prefix=str(args.get("prefix") or ""), max_items=int(args.get("max_items") or MAX_LIST_OBJECTS_RETURN), log_bucket=log_bucket, metrics_bucket=metrics_bucket),
         },
-        "fn": lambda args: object_audit_timeline(
-            source_bucket=str(args["source_bucket"]),
-            object_key=str(args["object_key"]),
-            hours=int(args.get("hours") or 168),
-            limit=int(args.get("limit") or 50),
-            methods=args.get("methods") if isinstance(args.get("methods"), list) else None,
-        ),
-    },
-}
+        "recent_objects": {
+            "description": "Return most recently modified objects (sorted by last_modified).",
+            "args_schema": {"bucket": "string", "prefix": "string(optional)", "limit": "int(optional)"},
+            "fn": lambda args: recent_objects(s3, str(args["bucket"]), prefix=str(args.get("prefix") or ""), limit=int(args.get("limit") or 10), log_bucket=log_bucket, metrics_bucket=metrics_bucket),
+        },
+        "storage_summary": {
+            "description": "Total bytes/objects for a bucket/prefix.",
+            "args_schema": {"bucket": "string", "prefix": "string(optional)"},
+            "fn": lambda args: storage_summary(s3, str(args["bucket"]), prefix=str(args.get("prefix") or ""), log_bucket=log_bucket, metrics_bucket=metrics_bucket),
+        },
+        "top_largest": {
+            "description": "Largest objects by size for a bucket/prefix.",
+            "args_schema": {"bucket": "string", "prefix": "string(optional)", "limit": "int(optional)"},
+            "fn": lambda args: (
+                lambda bucket, prefix, limit: (
+                    lambda objs: {"bucket": bucket, "prefix": prefix, "limit": limit, "objects": objs[:limit]}
+                )(
+                    sorted(list_objects(s3, bucket, prefix=prefix, log_bucket=log_bucket, metrics_bucket=metrics_bucket), key=lambda x: x["size_bytes"], reverse=True)
+                )
+            )(str(args["bucket"]), str(args.get("prefix") or ""), max(1, min(int(args.get("limit") or 10), MAX_TOP_LARGEST))),
+        },
 
-def _execute_tool(tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    spec = TOOLS.get(tool)
+        "snapshot": {
+            "description": "Write a metrics snapshot for a source bucket into metrics_bucket (storage + request stats from logs).",
+            "args_schema": {"source_bucket": "string", "source_prefix": "string(optional)"},
+            "fn": lambda args: run_metrics_snapshot(s3, str(args["source_bucket"]), str(args.get("source_prefix") or ""), log_bucket, log_prefix, metrics_bucket, metrics_prefix),
+        },
+        "metrics_sources": {
+            "description": "Discover source buckets by scanning stored snapshots in metrics_bucket/metrics_prefix.",
+            "args_schema": {"hours": "int(optional)"},
+            "fn": lambda args: metrics_sources_internal(s3, metrics_bucket, metrics_prefix, hours=int(args.get("hours") or 720), log_bucket=log_bucket),
+        },
+        "metrics_series": {
+            "description": "Get time series snapshot points for a source bucket/prefix.",
+            "args_schema": {"source_bucket": "string", "source_prefix": "string(optional)", "hours": "int(optional)", "limit": "int(optional)"},
+            "fn": lambda args: metrics_series_internal(
+                s3,
+                source_bucket=str(args["source_bucket"]),
+                metrics_bucket=metrics_bucket,
+                metrics_prefix=metrics_prefix,
+                source_prefix=str(args.get("source_prefix") or ""),
+                hours=int(args.get("hours") or 720),
+                limit=int(args.get("limit") or 500),
+                log_bucket=log_bucket,
+            ),
+        },
+
+        "list_access_logs": {
+            "description": "List log objects (.log/.log.gz) for a source bucket in log_bucket.",
+            "args_schema": {"source_bucket": "string", "date_yyyy_mm_dd": "string(optional)", "max_items": "int(optional)"},
+            "fn": lambda args: list_access_log_objects_for_source(
+                s3,
+                str(args["source_bucket"]),
+                log_bucket,
+                log_prefix,
+                date_yyyy_mm_dd=args.get("date_yyyy_mm_dd"),
+                max_items=int(args.get("max_items") or 50),
+                metrics_bucket=metrics_bucket,
+            ),
+        },
+        "read_log": {
+            "description": "Read tail of a log object (supports .gz). Provide bucket+key.",
+            "args_schema": {"bucket": "string", "key": "string", "tail_lines": "int(optional)"},
+            "fn": lambda args: read_log_object(s3, str(args["bucket"]), str(args["key"]), int(args.get("tail_lines") or 200), log_bucket=log_bucket, metrics_bucket=metrics_bucket),
+        },
+        "search_logs": {
+            "description": "Search access logs for a bucket with filters: method/object_key/status_prefix/contains (supports .gz).",
+            "args_schema": {
+                "source_bucket": "string",
+                "contains": "string(optional)",
+                "method": "string(optional)",
+                "object_key": "string(optional)",
+                "status_prefix": "string(optional)",
+                "date_yyyy_mm_dd": "string(optional)",
+                "limit_matches": "int(optional)",
+            },
+            "fn": lambda args: search_access_logs(
+                s3,
+                source_bucket=str(args["source_bucket"]),
+                log_bucket=log_bucket,
+                log_prefix=log_prefix,
+                contains=args.get("contains"),
+                method=args.get("method"),
+                object_key=args.get("object_key"),
+                status_prefix=args.get("status_prefix"),
+                date_yyyy_mm_dd=args.get("date_yyyy_mm_dd"),
+                limit_matches=int(args.get("limit_matches") or 20),
+                metrics_bucket=metrics_bucket,
+            ),
+        },
+        "object_audit": {
+            "description": "CloudTrail-ish event timeline for an object (find upload IP via PUT).",
+            "args_schema": {
+                "source_bucket": "string",
+                "object_key": "string",
+                "hours": "int(optional)",
+                "limit": "int(optional)",
+                "methods": "list(optional)",
+            },
+            "fn": lambda args: object_audit_timeline(
+                s3,
+                source_bucket=str(args["source_bucket"]),
+                object_key=str(args["object_key"]),
+                log_bucket=log_bucket,
+                log_prefix=log_prefix,
+                hours=int(args.get("hours") or 168),
+                limit=int(args.get("limit") or 50),
+                methods=args.get("methods") if isinstance(args.get("methods"), list) else None,
+                metrics_bucket=metrics_bucket,
+            ),
+        },
+    }
+
+
+def _execute_tool(tool: str, args: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    tools = _build_tools(ctx)
+    spec = tools.get(tool)
     if not spec:
         return _tool_error(f"Unknown tool: {tool}")
     try:
@@ -1533,7 +1620,10 @@ def _execute_tool(tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
         return _tool_error(f"{type(e).__name__}: {e}")
 
 
-AGENT_SYSTEM = f"""
+def _build_agent_system(ctx: Dict[str, Any]) -> str:
+    """Build AGENT_SYSTEM prompt with tools from context"""
+    tools = _build_tools(ctx)
+    return f"""
 You are SpaceWatch, an AI observability assistant for object storage (DigitalOcean Spaces / S3-style) and access logs.
 You have tool access through this backend. YOU are the driver. You must decide which tools to call.
 
@@ -1552,7 +1642,7 @@ Response format:
   {{"type":"final","answer":"<plain English answer>"}}.
 
 Available tools and schemas:
-{json.dumps({k: {"description": v["description"], "args_schema": v["args_schema"]} for k, v in TOOLS.items()}, indent=2)}
+{json.dumps({k: {"description": v["description"], "args_schema": v["args_schema"]} for k, v in tools.items()}, indent=2)}
 """.strip()
 
 
@@ -1569,17 +1659,29 @@ def chat(req: ChatRequest, request: Request, x_api_key: Optional[str] = Header(N
     if not user_msg:
         raise HTTPException(status_code=400, detail="Empty message")
 
+    # Create S3 client from request credentials
+    s3_client = create_s3_client(req.spaces_key.get_secret_value(), req.spaces_secret.get_secret_value(), req.region, req.endpoint)
+    
+    # Build context for tools
+    tool_ctx = {
+        "s3_client": s3_client,
+        "log_bucket": req.log_bucket,
+        "log_prefix": req.log_prefix or "",
+        "metrics_bucket": req.metrics_bucket,
+        "metrics_prefix": req.metrics_prefix or "spacewatch-metrics/",
+    }
+
     mkey = memory_key(request, x_session_id)
     mem = get_memory(mkey)
 
     context = {
         "now_utc": datetime.now(timezone.utc).isoformat(),
-        "spaces_endpoint": SPACES_ENDPOINT,
-        "access_logs_bucket": ACCESS_LOGS_BUCKET,
-        "access_logs_prefix": normalize_prefix(ACCESS_LOGS_ROOT_PREFIX),
-        "metrics_bucket": METRICS_BUCKET,
-        "metrics_prefix": normalize_prefix(METRICS_PREFIX),
-        "bucket_cache_count": len(refresh_bucket_cache()),
+        "spaces_endpoint": req.endpoint or DEFAULT_SPACES_ENDPOINT,
+        "access_logs_bucket": req.log_bucket or "not_configured",
+        "access_logs_prefix": normalize_prefix(req.log_prefix or ""),
+        "metrics_bucket": req.metrics_bucket or "not_configured",
+        "metrics_prefix": normalize_prefix(req.metrics_prefix or "spacewatch-metrics/"),
+        "bucket_cache_count": len(refresh_bucket_cache(s3_client, log_bucket=req.log_bucket, metrics_bucket=req.metrics_bucket)),
         "fallback_buckets_configured": bool(FALLBACK_BUCKETS),
         "last_bucket_context": mem.last_bucket if mem else None,
         "last_tool_context": mem.last_tool if mem else None,
@@ -1589,8 +1691,9 @@ def chat(req: ChatRequest, request: Request, x_api_key: Optional[str] = Header(N
         ],
     }
 
+    agent_system = _build_agent_system(tool_ctx)
     messages: List[Dict[str, str]] = [
-        {"role": "system", "content": AGENT_SYSTEM},
+        {"role": "system", "content": agent_system},
         {"role": "user", "content": json.dumps({"context": context, "user_question": user_msg}, indent=2)},
     ]
 
@@ -1647,7 +1750,7 @@ def chat(req: ChatRequest, request: Request, x_api_key: Optional[str] = Header(N
         last_tool_used = tool
 
         STATS["tool_requests"] += 1
-        tool_result = _execute_tool(tool, args)
+        tool_result = _execute_tool(tool, args, tool_ctx)
 
         messages.append({
             "role": "user",
@@ -1674,17 +1777,15 @@ def chat(req: ChatRequest, request: Request, x_api_key: Optional[str] = Header(N
 # ============================================================
 @app.get("/health")
 def health():
-    buckets = refresh_bucket_cache()
     storage_metrics = get_storage_metrics()
     
     return {
         "ok": True,
         "status": "healthy",
         "uptime_seconds": time.time() - app.state.start_time if hasattr(app.state, 'start_time') else 0,
-        "spaces_endpoint": SPACES_ENDPOINT,
-        "spaces_region": SPACES_REGION,
+        "spaces_endpoint": DEFAULT_SPACES_ENDPOINT,
+        "spaces_region": DEFAULT_SPACES_REGION,
         "api_key_protection": bool(APP_API_KEY),
-        "bucket_cache_count": len(buckets),
         "bucket_cache_last_error": _BUCKET_CACHE_LAST_ERROR,
         "fallback_buckets_enabled": bool(FALLBACK_BUCKETS),
         "agent": {"max_steps": AGENT_MAX_STEPS, "max_tool_bytes": AGENT_MAX_TOOL_BYTES},
@@ -1808,23 +1909,51 @@ def stats(x_api_key: Optional[str] = Header(None)):
     return {**STATS, **storage_metrics}
 
 @app.post("/metrics/snapshot")
-def metrics_snapshot(source_bucket: str, source_prefix: str = "", x_api_key: Optional[str] = Header(None), request: Request = None):
-    require_api_key(x_api_key)
-    if request:
-        rate_limit(client_ip(request))
-    return run_metrics_snapshot(source_bucket, source_prefix)
-
-@app.get("/plots/top-ips.png")
-def plot_top_ips_png(
+def metrics_snapshot(
     source_bucket: str,
-    date_yyyy_mm_dd: Optional[str] = None,
-    limit: int = 20,
+    source_prefix: str = "",
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    log_prefix: Optional[str] = Header(None, alias="X-Log-Prefix"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    metrics_prefix: Optional[str] = Header(None, alias="X-Metrics-Prefix"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),
     request: Request = None,
 ):
     require_api_key(x_api_key)
     if request:
         rate_limit(client_ip(request))
+    
+    if not log_bucket or not metrics_bucket:
+        raise HTTPException(status_code=400, detail="X-Log-Bucket and X-Metrics-Bucket headers required")
+    
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
+    return run_metrics_snapshot(s3_client, source_bucket, source_prefix, log_bucket, log_prefix or "", metrics_bucket, metrics_prefix or "")
+
+@app.get("/plots/top-ips.png")
+def plot_top_ips_png(
+    source_bucket: str,
+    date_yyyy_mm_dd: Optional[str] = None,
+    limit: int = 20,
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    log_prefix: Optional[str] = Header(None, alias="X-Log-Prefix"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    
+    if not log_bucket:
+        raise HTTPException(status_code=400, detail="X-Log-Bucket header required")
     
     # -------------------------
     # CACHE CHECK
@@ -1838,12 +1967,17 @@ def plot_top_ips_png(
             media_type="image/png"
         )
 
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
     
     # Use log search and count IPs
     res = search_access_logs(
+        s3_client=s3_client,
         source_bucket=source_bucket,
+        log_bucket=log_bucket,
+        log_prefix=log_prefix or "",
         date_yyyy_mm_dd=date_yyyy_mm_dd,
         limit_matches=2000,
+        metrics_bucket=metrics_bucket,
     )
     ip_counts = Counter()
     for m in res.get("matches", []):
@@ -1876,4 +2010,7 @@ def plot_top_ips_png(
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=140)
     plt.close(fig)
-    return Response(content=buf.getvalue(), media_type="image/png")
+    
+    png_bytes = buf.getvalue()
+    TOP_IPS_CACHE[cache_key] = (now, png_bytes)
+    return Response(content=png_bytes, media_type="image/png")

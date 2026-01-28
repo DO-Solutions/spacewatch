@@ -27,7 +27,7 @@ pip install -r requirements.txt
 
 ### 2. Configure Environment Variables
 
-Copy the sample environment file and configure your credentials:
+Copy the sample environment file and configure your settings:
 
 ```bash
 cp sample.env .env
@@ -36,26 +36,19 @@ cp sample.env .env
 Edit `.env` and set your actual values:
 
 ```bash
-# DigitalOcean Spaces
-SPACES_REGION=sgp1
-SPACES_ENDPOINT=https://sgp1.digitaloceanspaces.com
-SPACES_KEY=your_actual_spaces_access_key
-SPACES_SECRET=your_actual_spaces_secret_key
-
-# AI Agent (OpenAI-compatible)
+# AI Agent (OpenAI-compatible) - REQUIRED
 DO_AGENT_URL=https://your-agent-host/v1/chat/completions
 DO_AGENT_KEY=your_actual_agent_api_key
 
-# Access Logs + Metrics
-ACCESS_LOGS_BUCKET=my-access-logs
-ACCESS_LOGS_ROOT_PREFIX=spaces-logs/
-
-METRICS_BUCKET=my-access-logs
-METRICS_PREFIX=spacewatch-metrics/
-
 # App Security (optional but recommended)
 APP_API_KEY=your_api_key_here
+
+# Default Region (optional)
+SPACES_REGION=sgp1
+SPACES_ENDPOINT=https://sgp1.digitaloceanspaces.com
 ```
+
+**Note:** DigitalOcean Spaces credentials are now provided per-request, not globally configured. See the Multi-Tenant Usage section below for details.
 
 ### 3. Run the Application
 
@@ -69,23 +62,81 @@ Or for development with auto-reload:
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+## Multi-Tenant Usage
+
+SpaceWatch now supports multi-tenant usage where each request provides its own DigitalOcean Spaces credentials. This allows multiple users to access their own Spaces resources securely without sharing credentials.
+
+### Chat Endpoint
+
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your_api_key" \
+  -d '{
+    "message": "Show me my largest files",
+    "spaces_key": "your_spaces_access_key",
+    "spaces_secret": "your_spaces_secret_key",
+    "log_bucket": "my-access-logs",
+    "log_prefix": "spaces-logs/",
+    "metrics_bucket": "my-metrics",
+    "metrics_prefix": "spacewatch-metrics/"
+  }'
+```
+
+### Tool Endpoints
+
+All tool endpoints now accept credentials via headers:
+
+```bash
+curl -X GET "http://localhost:8000/tools/buckets" \
+  -H "X-API-Key: your_api_key" \
+  -H "X-Spaces-Key: your_spaces_access_key" \
+  -H "X-Spaces-Secret: your_spaces_secret_key"
+```
+
+```bash
+curl -X GET "http://localhost:8000/tools/list-all?bucket=my-bucket" \
+  -H "X-API-Key: your_api_key" \
+  -H "X-Spaces-Key: your_spaces_access_key" \
+  -H "X-Spaces-Secret: your_spaces_secret_key" \
+  -H "X-Log-Bucket: my-access-logs" \
+  -H "X-Metrics-Bucket: my-metrics"
+```
+
+### Required Headers
+
+- `X-Spaces-Key` - Your DigitalOcean Spaces access key
+- `X-Spaces-Secret` - Your DigitalOcean Spaces secret key
+
+### Optional Headers
+
+- `X-Log-Bucket` - Bucket containing access logs (required for log-related queries)
+- `X-Log-Prefix` - Prefix for access logs (default: "")
+- `X-Metrics-Bucket` - Bucket for storing metrics (required for metrics operations)
+- `X-Metrics-Prefix` - Prefix for metrics (default: "spacewatch-metrics/")
+- `X-Region` - Spaces region (default: from SPACES_REGION env var)
+- `X-Endpoint` - Spaces endpoint URL (default: from SPACES_ENDPOINT env var)
+
 ## Environment Variables
 
 The application automatically loads environment variables from a `.env` file in the project root directory.
 
 ### Required Variables
 
-- `SPACES_KEY` - DigitalOcean Spaces access key
-- `SPACES_SECRET` - DigitalOcean Spaces secret key
 - `DO_AGENT_URL` - OpenAI-compatible chat completions endpoint
 - `DO_AGENT_KEY` - API key for the AI agent
 
 ### Optional Variables
 
+- `APP_API_KEY` - API key to protect endpoints (recommended)
+- `SPACES_REGION` - Default DigitalOcean Spaces region (default: "sgp1")
+- `SPACES_ENDPOINT` - Default Spaces endpoint URL
+
 See `sample.env` for a complete list of optional configuration variables.
 
 ## Features
 
+- **Multi-tenant support** - Each request uses its own credentials
 - **AI-driven observability assistant**
 - **Real-time storage operation metrics** (S3/Azure Blob style)
   - Operation latency tracking with percentiles (P50, P95, P99)

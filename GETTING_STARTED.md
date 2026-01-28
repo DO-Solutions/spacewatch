@@ -2,6 +2,22 @@
 
 Your SpaceWatch application has been successfully enhanced with **AWS S3 and Azure Blob Storage style metrics and logging** - focused exclusively on **storage operations**.
 
+## 🔐 Multi-Tenant Support
+
+**IMPORTANT:** SpaceWatch now supports multi-tenant usage! Each request must provide its own DigitalOcean Spaces credentials.
+
+**Required Headers for All Requests:**
+- `X-Spaces-Key`: Your DigitalOcean Spaces access key
+- `X-Spaces-Secret`: Your DigitalOcean Spaces secret key
+
+**Optional Headers:**
+- `X-Log-Bucket`: Your bucket for access logs
+- `X-Metrics-Bucket`: Your bucket for metrics
+- `X-Log-Prefix`: Prefix for access logs (default: "")
+- `X-Metrics-Prefix`: Prefix for metrics (default: "spacewatch-metrics/")
+
+See README.md for detailed multi-tenant usage examples.
+
 ## What's New
 
 ### 1. Real-Time Storage Operations Dashboard 📊

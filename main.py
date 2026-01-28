@@ -51,7 +51,7 @@ from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from collections import Counter
 
 import matplotlib
@@ -145,6 +145,9 @@ def create_s3_client(access_key: str, secret_key: str, region: Optional[str] = N
     Create an S3 client dynamically with provided user credentials.
     This allows multi-tenant usage where each request uses its own credentials.
     """
+    if not access_key or not secret_key:
+        raise HTTPException(status_code=400, detail="Spaces access key and secret key are required")
+    
     region = region or DEFAULT_SPACES_REGION
     endpoint = endpoint or DEFAULT_SPACES_ENDPOINT
     
@@ -274,8 +277,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ============================================================
 class ChatRequest(BaseModel):
     message: str
-    spaces_key: str
-    spaces_secret: str
+    spaces_key: SecretStr
+    spaces_secret: SecretStr
     log_bucket: Optional[str] = None  # User's bucket for access logs
     log_prefix: Optional[str] = ""    # Optional prefix for access logs
     metrics_bucket: Optional[str] = None  # User's bucket for metrics
@@ -700,7 +703,7 @@ def storage_summary(s3_client, bucket: str, prefix: str = "", log_bucket: Option
         "total_size_human": bytes_to_human(total),
     }
 
-def compute_request_metrics_from_logs(s3_client, source_bucket: str, log_bucket: str, log_prefix: str = "") -> Dict[str, Any]:
+def compute_request_metrics_from_logs(s3_client, source_bucket: str, log_bucket: Optional[str], log_prefix: str = "") -> Dict[str, Any]:
     if not log_bucket:
         return {"requests_total": 0, "note": "log_bucket not set"}
 
@@ -793,6 +796,8 @@ def compute_request_metrics_from_logs(s3_client, source_bucket: str, log_bucket:
 def run_metrics_snapshot(s3_client, source_bucket: str, source_prefix: str = "", log_bucket: Optional[str] = None, log_prefix: str = "", metrics_bucket: Optional[str] = None, metrics_prefix: str = "") -> Dict[str, Any]:
     if not log_bucket:
         raise HTTPException(status_code=400, detail="log_bucket not set")
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="metrics_bucket not set")
 
     ts = datetime.now(timezone.utc)
     logs_prefix = normalize_prefix(log_prefix)
@@ -831,7 +836,9 @@ def run_metrics_snapshot(s3_client, source_bucket: str, source_prefix: str = "",
 # ============================================================
 METRICS_MAX_POINTS = int(os.getenv("METRICS_MAX_POINTS", "2000"))
 
-def metrics_sources_internal(s3_client, metrics_bucket: str, metrics_prefix: str = "", hours: int = 168, log_bucket: Optional[str] = None) -> Dict[str, Any]:
+def metrics_sources_internal(s3_client, metrics_bucket: Optional[str], metrics_prefix: str = "", hours: int = 168, log_bucket: Optional[str] = None) -> Dict[str, Any]:
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="metrics_bucket not set")
     hours = max(1, min(int(hours), 720))
     metrics_pfx = normalize_prefix(metrics_prefix)
     objs = list_objects(s3_client, metrics_bucket, prefix=metrics_pfx, log_bucket=log_bucket, metrics_bucket=metrics_bucket)
@@ -875,7 +882,9 @@ def metrics_sources_internal(s3_client, metrics_bucket: str, metrics_prefix: str
     out = sorted(sources)
     return {"count": len(out), "sources": out, "metrics_bucket": metrics_bucket, "metrics_prefix": metrics_pfx}
 
-def metrics_series_internal(s3_client, source_bucket: str, metrics_bucket: str, metrics_prefix: str = "", source_prefix: str = "", limit: int = 500, hours: int = 168, log_bucket: Optional[str] = None) -> Dict[str, Any]:
+def metrics_series_internal(s3_client, source_bucket: str, metrics_bucket: Optional[str], metrics_prefix: str = "", source_prefix: str = "", limit: int = 500, hours: int = 168, log_bucket: Optional[str] = None) -> Dict[str, Any]:
+    if not metrics_bucket:
+        raise HTTPException(status_code=400, detail="metrics_bucket not set")
     limit = max(1, min(int(limit), METRICS_MAX_POINTS))
     hours = max(1, min(int(hours), 720))
 
@@ -1195,7 +1204,7 @@ def read_log_object(s3_client, bucket: str, key: str, tail_lines: int = 200, log
     lines = safe_tail_lines(text, min(int(tail_lines), MAX_LOG_LINES))
     return {"bucket": bucket, "key": key, "returned_lines": len(lines), "log_lines": lines}
 
-def list_access_log_objects_for_source(s3_client, source_bucket: str, log_bucket: str, log_prefix: str = "", date_yyyy_mm_dd: Optional[str] = None, max_items: int = 200, metrics_bucket: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_access_log_objects_for_source(s3_client, source_bucket: str, log_bucket: Optional[str], log_prefix: str = "", date_yyyy_mm_dd: Optional[str] = None, max_items: int = 200, metrics_bucket: Optional[str] = None) -> List[Dict[str, Any]]:
     if not log_bucket:
         raise HTTPException(status_code=400, detail="log_bucket not set")
     root = normalize_prefix(log_prefix)
@@ -1214,7 +1223,7 @@ def list_access_log_objects_for_source(s3_client, source_bucket: str, log_bucket
 def search_access_logs(
     s3_client,
     source_bucket: str,
-    log_bucket: str,
+    log_bucket: Optional[str],
     log_prefix: str = "",
     contains: Optional[str] = None,
     method: Optional[str] = None,
@@ -1303,7 +1312,7 @@ def search_access_logs(
         "note": "Matches are best-effort based on scanned recent log files.",
     }
 
-def object_audit_timeline(s3_client, source_bucket: str, object_key: str, log_bucket: str, log_prefix: str = "", hours: int = 168, limit: int = 50, methods: Optional[List[str]] = None, metrics_bucket: Optional[str] = None) -> Dict[str, Any]:
+def object_audit_timeline(s3_client, source_bucket: str, object_key: str, log_bucket: Optional[str], log_prefix: str = "", hours: int = 168, limit: int = 50, methods: Optional[List[str]] = None, metrics_bucket: Optional[str] = None) -> Dict[str, Any]:
     """
     CloudTrail-ish timeline for a specific object:
     - searches access logs for that object key across recent files
@@ -1651,7 +1660,7 @@ def chat(req: ChatRequest, request: Request, x_api_key: Optional[str] = Header(N
         raise HTTPException(status_code=400, detail="Empty message")
 
     # Create S3 client from request credentials
-    s3_client = create_s3_client(req.spaces_key, req.spaces_secret, req.region, req.endpoint)
+    s3_client = create_s3_client(req.spaces_key.get_secret_value(), req.spaces_secret.get_secret_value(), req.region, req.endpoint)
     
     # Build context for tools
     tool_ctx = {

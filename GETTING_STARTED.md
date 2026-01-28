@@ -104,17 +104,37 @@ Use these for debugging and request tracing across your systems.
 
 ## How to Use
 
-### 1. Start the Application
+### 1. Configure SpaceWatch
+
+**First Time Setup:**
+
+Before starting the application, run the interactive setup wizard:
 
 ```bash
-# Install dependencies (if not already installed)
+# Install dependencies
 pip install -r requirements.txt
 
+# Run interactive setup
+python setup.py
+```
+
+The setup wizard will guide you through configuring:
+- AI Agent URL and API Key (required)
+- Application API Key for security (optional)
+- Default DigitalOcean Spaces region (optional)
+
+**Already Configured?**
+
+If you already have a `.env` file, you can skip the setup and go directly to starting the application.
+
+### 2. Start the Application
+
+```bash
 # Start the server
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 2. Access the Dashboard
+### 3. Access the Dashboard
 
 Open your browser to:
 ```
@@ -123,7 +143,7 @@ http://localhost:8000
 
 You'll see the new **Storage Operations Health** panel at the top of the dashboard showing real-time metrics!
 
-### 3. Monitor Your Storage
+### 4. Monitor Your Storage
 
 The dashboard will automatically:
 - Track all storage operations
@@ -132,7 +152,7 @@ The dashboard will automatically:
 - Display operation breakdown
 - Auto-refresh every 30 seconds
 
-### 4. Query Metrics via API
+### 5. Query Metrics via API
 
 Use the new API endpoints to integrate with your monitoring systems:
 

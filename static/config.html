@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SpaceWatch - Configuration</title>
+  <style>
+    /* DigitalOcean-inspired Color Scheme */
+    :root {
+      --bg: #ffffff;
+      --panel: #f2f3f3;
+      --border: #d5dbdb;
+      --muted: #545b64;
+      --text: #16191f;
+      --danger: #d13212;
+      --accent: #0073bb;
+      --accentHover: #005a9e;
+      --doBlue: #0069ff;
+      --doBlueLight: #e6f0ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(135deg, #e6f0ff 0%, #f0f7ff 25%, #ffffff 50%, #f0f7ff 75%, #e6f0ff 100%);
+      background-attachment: fixed;
+      color: var(--text);
+      margin: 0;
+      padding: 40px 18px;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .container {
+      max-width: 700px;
+      width: 100%;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 42px;
+      letter-spacing: 0.2px;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    .card {
+      background: #ffffff;
+      border: 1px solid rgba(0, 105, 255, 0.2);
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 4px 20px rgba(0, 105, 255, 0.15);
+      backdrop-filter: blur(10px);
+    }
+
+    .form-section {
+      margin-bottom: 32px;
+    }
+
+    .form-section:last-of-type {
+      margin-bottom: 24px;
+    }
+
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--doBlueLight);
+    }
+
+    .section-description {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .label-required::after {
+      content: " *";
+      color: var(--danger);
+    }
+
+    .label-description {
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--muted);
+      display: block;
+      margin-top: 2px;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="url"] {
+      width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+    }
+
+    input::placeholder {
+      color: var(--muted);
+      opacity: 0.6;
+    }
+
+    .error-message {
+      display: none;
+      color: var(--danger);
+      font-size: 13px;
+      margin-top: 6px;
+    }
+
+    .error-message.show {
+      display: block;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    button {
+      flex: 1;
+      background: var(--doBlue);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 12px 24px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+      outline: none;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--accentHover);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.secondary {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    button.secondary:hover:not(:disabled) {
+      background: var(--doBlueLight);
+      border-color: var(--accent);
+    }
+
+    .info-box {
+      background: var(--doBlueLight);
+      border: 1px solid rgba(0, 105, 255, 0.3);
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text);
+    }
+
+    .info-box strong {
+      color: var(--doBlue);
+    }
+
+    @media (max-width: 600px) {
+      h1 {
+        font-size: 32px;
+      }
+
+      .card {
+        padding: 24px 20px;
+      }
+
+      .button-group {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>SpaceWatch</h1>
+      <p class="subtitle">AI-Driven Observability for DigitalOcean Spaces</p>
+    </div>
+
+    <div class="card">
+      <div class="info-box">
+        <strong>Welcome!</strong> To get started, please provide your DigitalOcean Spaces credentials below. 
+        All credentials are stored locally in your browser session and are only sent to the backend when making API requests.
+      </div>
+
+      <form id="configForm">
+        <!-- Application Configuration -->
+        <div class="form-section">
+          <div class="section-title">Application Settings</div>
+          <div class="section-description">
+            Optional application configuration.
+          </div>
+
+          <div class="form-group">
+            <label for="appApiKey">
+              Application API Key
+              <span class="label-description">Optional - only required if the server has APP_API_KEY configured</span>
+            </label>
+            <input 
+              type="password" 
+              id="appApiKey" 
+              name="appApiKey" 
+              placeholder="Leave empty if not configured on server"
+            />
+          </div>
+        </div>
+
+        <!-- DigitalOcean Spaces Credentials -->
+        <div class="form-section">
+          <div class="section-title">DigitalOcean Spaces Credentials</div>
+          <div class="section-description">
+            Your DigitalOcean Spaces access credentials for managing and monitoring your storage.
+          </div>
+
+          <div class="form-group">
+            <label for="spacesKey" class="label-required">
+              Spaces Access Key
+              <span class="label-description">Your DigitalOcean Spaces access key ID</span>
+            </label>
+            <input 
+              type="text" 
+              id="spacesKey" 
+              name="spacesKey" 
+              placeholder="DO00XXXXXXXXXXXXX"
+              required
+              aria-describedby="spacesKeyError"
+            />
+            <div class="error-message" id="spacesKeyError" role="alert" aria-live="polite"></div>
+          </div>
+
+          <div class="form-group">
+            <label for="spacesSecret" class="label-required">
+              Spaces Secret Key
+              <span class="label-description">Your DigitalOcean Spaces secret access key</span>
+            </label>
+            <input 
+              type="password" 
+              id="spacesSecret" 
+              name="spacesSecret" 
+              placeholder="Your secret key"
+              required
+              aria-describedby="spacesSecretError"
+            />
+            <div class="error-message" id="spacesSecretError" role="alert" aria-live="polite"></div>
+          </div>
+
+          <div class="form-group">
+            <label for="spacesRegion">
+              Spaces Region
+              <span class="label-description">DigitalOcean Spaces region (e.g., sgp1, nyc3, sfo3)</span>
+            </label>
+            <input 
+              type="text" 
+              id="spacesRegion" 
+              name="spacesRegion" 
+              placeholder="sgp1"
+              value="sgp1"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="spacesEndpoint">
+              Spaces Endpoint URL
+              <span class="label-description">Full endpoint URL (auto-generated from region if left empty)</span>
+            </label>
+            <input 
+              type="url" 
+              id="spacesEndpoint" 
+              name="spacesEndpoint" 
+              placeholder="https://sgp1.digitaloceanspaces.com"
+            />
+          </div>
+        </div>
+
+        <!-- Bucket Configuration -->
+        <div class="form-section">
+          <div class="section-title">Bucket Configuration</div>
+          <div class="section-description">
+            Configure buckets for access logs and metrics storage. These are optional but recommended for full functionality.
+          </div>
+
+          <div class="form-group">
+            <label for="logBucket">
+              Access Logs Bucket
+              <span class="label-description">Bucket name where access logs are stored</span>
+            </label>
+            <input 
+              type="text" 
+              id="logBucket" 
+              name="logBucket" 
+              placeholder="my-access-logs"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="logPrefix">
+              Access Logs Prefix
+              <span class="label-description">Prefix/folder path for access logs within the bucket</span>
+            </label>
+            <input 
+              type="text" 
+              id="logPrefix" 
+              name="logPrefix" 
+              placeholder="spaces-logs/"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="metricsBucket">
+              Metrics Bucket
+              <span class="label-description">Bucket name for storing metrics snapshots</span>
+            </label>
+            <input 
+              type="text" 
+              id="metricsBucket" 
+              name="metricsBucket" 
+              placeholder="my-metrics"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="metricsPrefix">
+              Metrics Prefix
+              <span class="label-description">Prefix/folder path for metrics within the bucket</span>
+            </label>
+            <input 
+              type="text" 
+              id="metricsPrefix" 
+              name="metricsPrefix" 
+              placeholder="spacewatch-metrics/"
+              value="spacewatch-metrics/"
+            />
+          </div>
+        </div>
+
+        <div class="button-group">
+          <button type="button" class="secondary" id="loadSampleBtn">Load Sample Values</button>
+          <button type="submit" id="submitBtn">Continue to SpaceWatch</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Load any existing configuration from sessionStorage
+    function loadExistingConfig() {
+      const fields = [
+        'appApiKey', 'spacesKey', 'spacesSecret',
+        'spacesRegion', 'spacesEndpoint', 'logBucket', 'logPrefix', 
+        'metricsBucket', 'metricsPrefix'
+      ];
+
+      fields.forEach(field => {
+        const value = sessionStorage.getItem(`spacewatch_${field}`);
+        if (value) {
+          document.getElementById(field).value = value;
+        }
+      });
+    }
+
+    // Load sample values for testing
+    function loadSampleValues() {
+      document.getElementById('appApiKey').value = 'devkey';
+      document.getElementById('spacesKey').value = 'DO00XXXXXXXXXXXXX';
+      document.getElementById('spacesSecret').value = 'your_secret_key_here';
+      document.getElementById('spacesRegion').value = 'sgp1';
+      document.getElementById('spacesEndpoint').value = 'https://sgp1.digitaloceanspaces.com';
+      document.getElementById('logBucket').value = 'my-access-logs';
+      document.getElementById('logPrefix').value = 'spaces-logs/';
+      document.getElementById('metricsBucket').value = 'my-metrics';
+      document.getElementById('metricsPrefix').value = 'spacewatch-metrics/';
+    }
+
+    // Form submission handler
+    document.getElementById('configForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+
+      // Clear previous errors
+      document.querySelectorAll('.error-message').forEach(el => el.classList.remove('show'));
+
+      // Get form values
+      const config = {
+        appApiKey: document.getElementById('appApiKey').value.trim(),
+        spacesKey: document.getElementById('spacesKey').value.trim(),
+        spacesSecret: document.getElementById('spacesSecret').value.trim(),
+        spacesRegion: document.getElementById('spacesRegion').value.trim() || 'sgp1',
+        spacesEndpoint: document.getElementById('spacesEndpoint').value.trim(),
+        logBucket: document.getElementById('logBucket').value.trim(),
+        logPrefix: document.getElementById('logPrefix').value.trim(),
+        metricsBucket: document.getElementById('metricsBucket').value.trim(),
+        metricsPrefix: document.getElementById('metricsPrefix').value.trim() || 'spacewatch-metrics/'
+      };
+
+      // Auto-generate endpoint from region if not provided
+      if (!config.spacesEndpoint && config.spacesRegion) {
+        config.spacesEndpoint = `https://${config.spacesRegion}.digitaloceanspaces.com`;
+      }
+
+      // Validate required fields
+      let hasError = false;
+
+      if (!config.spacesKey) {
+        showError('spacesKeyError', 'Spaces Access Key is required');
+        hasError = true;
+      }
+
+      if (!config.spacesSecret) {
+        showError('spacesSecretError', 'Spaces Secret Key is required');
+        hasError = true;
+      }
+
+      if (hasError) {
+        return;
+      }
+
+      // Save configuration to sessionStorage
+      Object.keys(config).forEach(key => {
+        sessionStorage.setItem(`spacewatch_${key}`, config[key]);
+      });
+
+      // Mark as configured
+      sessionStorage.setItem('spacewatch_configured', 'true');
+
+      // Redirect to main application dashboard
+      window.location.href = '/dashboard';
+    });
+
+    function showError(elementId, message) {
+      const errorEl = document.getElementById(elementId);
+      errorEl.textContent = message;
+      errorEl.classList.add('show');
+    }
+
+    // Load sample values button
+    document.getElementById('loadSampleBtn').addEventListener('click', loadSampleValues);
+
+    // Load existing config on page load
+    loadExistingConfig();
+
+    // If already configured, provide option to skip
+    if (sessionStorage.getItem('spacewatch_configured') === 'true') {
+      const infoBox = document.querySelector('.info-box');
+      infoBox.innerHTML = '<strong>Configuration Found!</strong> You already have a saved configuration. ' +
+        'You can update the values below and click "Continue to SpaceWatch", or ' +
+        '<a href="/dashboard" style="color: var(--doBlue); text-decoration: underline; cursor: pointer;">skip to the application</a>.';
+    }
+  </script>
+</body>
+</html>

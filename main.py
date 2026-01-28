@@ -195,7 +195,9 @@ async def track_storage_operations(request: Request, call_next):
     bucket = None
     
     path = request.url.path
-    if path == "/" or path == "/static/index.html":
+    if path == "/" or path == "/config" or path.endswith("/config.html"):
+        operation_type = "CONFIG_PAGE"
+    elif path == "/dashboard" or path.endswith("/index.html"):
         operation_type = "PAGE_LOAD"
     elif "/static/" in path:
         operation_type = "STATIC_ASSET"
@@ -270,9 +272,18 @@ if os.path.isdir("static"):
 
 @app.get("/")
 def home():
+    """Serve the configuration page as the landing page"""
+    if os.path.exists("static/config.html"):
+        return FileResponse("static/config.html")
+    return {"ok": True, "message": "SpaceWatch backend running"}
+
+
+@app.get("/dashboard")
+def dashboard():
+    """Serve the main dashboard after configuration"""
     if os.path.exists("static/index.html"):
         return FileResponse("static/index.html")
-    return {"ok": True, "message": "SpaceWatch backend running"}
+    return {"ok": True, "message": "SpaceWatch dashboard not found"}
 
 
 @app.exception_handler(Exception)

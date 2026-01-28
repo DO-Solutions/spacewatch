@@ -270,9 +270,18 @@ if os.path.isdir("static"):
 
 @app.get("/")
 def home():
+    """Serve the configuration page as the landing page"""
+    if os.path.exists("static/config.html"):
+        return FileResponse("static/config.html")
+    return {"ok": True, "message": "SpaceWatch backend running"}
+
+
+@app.get("/dashboard")
+def dashboard():
+    """Serve the main dashboard after configuration"""
     if os.path.exists("static/index.html"):
         return FileResponse("static/index.html")
-    return {"ok": True, "message": "SpaceWatch backend running"}
+    return {"ok": True, "message": "SpaceWatch dashboard not found"}
 
 
 @app.exception_handler(Exception)

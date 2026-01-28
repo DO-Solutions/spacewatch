@@ -1953,6 +1953,58 @@ def metrics_snapshot(
     s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
     return run_metrics_snapshot(s3_client, source_bucket, source_prefix, log_bucket, log_prefix or "", metrics_bucket, metrics_prefix or "")
 
+@app.get("/metrics/top-ips")
+def get_top_ips(
+    source_bucket: str,
+    date_yyyy_mm_dd: Optional[str] = None,
+    limit: int = 20,
+    spaces_key: str = Header(..., alias="X-Spaces-Key"),
+    spaces_secret: str = Header(..., alias="X-Spaces-Secret"),
+    log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
+    log_prefix: Optional[str] = Header(None, alias="X-Log-Prefix"),
+    metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    metrics_prefix: Optional[str] = Header(None, alias="X-Metrics-Prefix"),
+    region: Optional[str] = Header(None, alias="X-Region"),
+    endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
+    x_api_key: Optional[str] = Header(None),
+    request: Request = None,
+):
+    """
+    Return top IPs data as JSON for client-side Chart.js rendering.
+    """
+    require_api_key(x_api_key)
+    if request:
+        rate_limit(client_ip(request))
+    
+    if not log_bucket:
+        raise HTTPException(status_code=400, detail="X-Log-Bucket header required")
+    
+    s3_client = create_s3_client(spaces_key, spaces_secret, region, endpoint)
+    
+    # Use log search and count IPs
+    res = search_access_logs(
+        s3_client=s3_client,
+        source_bucket=source_bucket,
+        log_bucket=log_bucket,
+        log_prefix=log_prefix or "",
+        date_yyyy_mm_dd=date_yyyy_mm_dd,
+        limit_matches=2000,
+        metrics_bucket=metrics_bucket,
+    )
+    ip_counts = Counter()
+    for m in res.get("matches", []):
+        if m.get("ip"):
+            ip_counts[m["ip"]] += 1
+
+    top = ip_counts.most_common(max(1, min(int(limit), 50)))
+    
+    return {
+        "top_ips": [{"ip": ip, "count": count} for ip, count in top],
+        "total_ips": len(ip_counts),
+        "source_bucket": source_bucket,
+        "date": date_yyyy_mm_dd
+    }
+
 @app.get("/plots/top-ips.png")
 def plot_top_ips_png(
     source_bucket: str,

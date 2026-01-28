@@ -143,7 +143,7 @@ if not all([DO_AGENT_URL, DO_AGENT_KEY]):
     print("\nOr manually create a .env file with the required variables.")
     print("See sample.env for an example configuration.")
     print("=" * 70 + "\n")
-    raise RuntimeError("Missing required env vars: DO_AGENT_URL, DO_AGENT_KEY. Run 'python setup.py' to configure.")
+    raise RuntimeError("Missing required configuration")
 
 
 # ============================================================

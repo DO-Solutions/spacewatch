@@ -6,7 +6,9 @@ Prompts users for required configuration before running the application
 
 import os
 import sys
+import getpass
 from pathlib import Path
+from datetime import datetime
 
 
 def get_input(prompt, default=None, required=True, is_secret=False):
@@ -20,10 +22,10 @@ def get_input(prompt, default=None, required=True, is_secret=False):
         if is_secret:
             # For secret inputs, try getpass but fall back to regular input if it fails
             try:
-                import getpass
                 value = getpass.getpass(display_prompt)
-            except Exception:
+            except Exception as e:
                 # Fall back to regular input if getpass fails (e.g., in non-interactive mode)
+                print(f"  ⚠️  Warning: Secure input not available ({e}). Input will be visible.")
                 value = input(display_prompt).strip()
         else:
             value = input(display_prompt).strip()
@@ -72,6 +74,14 @@ def setup_configuration():
         required=True
     )
     
+    # Validate URL format
+    if not (config["DO_AGENT_URL"].startswith("http://") or config["DO_AGENT_URL"].startswith("https://")):
+        print("  ⚠️  Warning: URL should start with http:// or https://")
+        confirm = input("Continue anyway? (yes/no) [no]: ").strip().lower()
+        if confirm not in ("yes", "y"):
+            print("Setup cancelled. Please run setup.py again with a valid URL.")
+            return False
+    
     config["DO_AGENT_KEY"] = get_input(
         "AI Agent API Key",
         default=None,
@@ -107,22 +117,24 @@ def setup_configuration():
     )
     
     # Auto-generate endpoint from region
-    if config["SPACES_REGION"]:
+    if config["SPACES_REGION"] and config["SPACES_REGION"].strip():
         default_endpoint = f"https://{config['SPACES_REGION']}.digitaloceanspaces.com"
         config["SPACES_ENDPOINT"] = get_input(
             "Default Spaces endpoint URL",
             default=default_endpoint,
             required=False
         )
+    else:
+        config["SPACES_ENDPOINT"] = ""
     print()
     
     # Write .env file
     print("💾 Writing configuration to .env file...")
     try:
-        with open(".env", "w") as f:
+        with open(".env", "w", encoding="utf-8") as f:
             f.write("# ================================\n")
             f.write("# SpaceWatch Configuration\n")
-            f.write(f"# Generated: {os.popen('date').read().strip()}\n")
+            f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("# ================================\n\n")
             
             f.write("# ================================\n")
@@ -137,13 +149,13 @@ def setup_configuration():
                 f.write("# ================================\n")
                 f.write(f"APP_API_KEY={config['APP_API_KEY']}\n\n")
             
-            if config.get("SPACES_REGION"):
+            if config.get("SPACES_REGION") and config["SPACES_REGION"].strip():
                 f.write("# ================================\n")
                 f.write("# Default Region (Optional)\n")
                 f.write("# Users can override per request\n")
                 f.write("# ================================\n")
                 f.write(f"SPACES_REGION={config['SPACES_REGION']}\n")
-                if config.get("SPACES_ENDPOINT"):
+                if config.get("SPACES_ENDPOINT") and config["SPACES_ENDPOINT"].strip():
                     f.write(f"SPACES_ENDPOINT={config['SPACES_ENDPOINT']}\n")
                 f.write("\n")
             

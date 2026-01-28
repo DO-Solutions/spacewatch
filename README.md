@@ -40,7 +40,7 @@ The wizard will prompt you for:
 - **DO_AGENT_KEY** - API key for the AI agent (required)
 - **APP_API_KEY** - API key to protect endpoints (optional but recommended)
 - **SPACES_REGION** - Default DigitalOcean Spaces region (optional, default: sgp1)
-- **SPACES_ENDPOINT** - Default Spaces endpoint URL (optional)
+- **SPACES_ENDPOINT** - Default Spaces endpoint URL (optional, auto-generated from region)
 
 **Option B: Manual Configuration**
 

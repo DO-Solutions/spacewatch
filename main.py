@@ -1963,6 +1963,7 @@ def get_top_ips(
     log_bucket: Optional[str] = Header(None, alias="X-Log-Bucket"),
     log_prefix: Optional[str] = Header(None, alias="X-Log-Prefix"),
     metrics_bucket: Optional[str] = Header(None, alias="X-Metrics-Bucket"),
+    metrics_prefix: Optional[str] = Header(None, alias="X-Metrics-Prefix"),
     region: Optional[str] = Header(None, alias="X-Region"),
     endpoint: Optional[str] = Header(None, alias="X-Endpoint"),
     x_api_key: Optional[str] = Header(None),

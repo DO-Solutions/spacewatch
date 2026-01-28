@@ -772,8 +772,6 @@ Examples:
   const thinking = document.getElementById("thinking");
   const thinkingDetail = document.getElementById("thinkingDetail");
 
-  const ipBarImg = document.getElementById("ipBarImg");
-
   // Agent panel elements
   const agentPanel = document.getElementById("agentPanel");
   const agentFab = document.getElementById("agentFab");
@@ -1213,8 +1211,7 @@ Examples:
       
       if (!topIps.length) {
         setMeta("top_ipsMeta", "No IP data");
-        // Render empty chart
-        const ctx = document.getElementById("chart_top_ips").getContext("2d");
+        // Clear existing chart
         if (charts["top_ips"]) {
           charts["top_ips"].destroy();
           delete charts["top_ips"];
@@ -1242,7 +1239,8 @@ Examples:
       };
       
       if (charts["top_ips"]) {
-        charts["top_ips"].data = chartData;
+        charts["top_ips"].data.labels = chartData.labels;
+        charts["top_ips"].data.datasets = chartData.datasets;
         charts["top_ips"].update();
       } else {
         charts["top_ips"] = new Chart(ctx, {

@@ -626,7 +626,7 @@
             <div class="chartTitle">Top IPs</div>
             <div class="chartMeta" id="top_ipsMeta">—</div>
           </div>
-          <img id="ipBarImg" style="width:100%; border-radius:12px; border:1px solid #22314a;" />
+          <canvas id="chart_top_ips" height="130"></canvas>
         </div>
       </div>
 
@@ -1198,6 +1198,89 @@ Examples:
     if (el) el.textContent = text || "—";
   }
 
+  async function renderTopIpsChart(sourceBucket) {
+    try {
+      const url = `${BASE_URL}/metrics/top-ips?source_bucket=${encodeURIComponent(sourceBucket)}&limit=20`;
+      const r = await fetch(url, { headers: headersBase() });
+      if (!r.ok) {
+        console.error("Failed to load top IPs:", r.status);
+        setMeta("top_ipsMeta", "Failed to load");
+        return;
+      }
+      
+      const data = await r.json();
+      const topIps = data.top_ips || [];
+      
+      if (!topIps.length) {
+        setMeta("top_ipsMeta", "No IP data");
+        // Render empty chart
+        const ctx = document.getElementById("chart_top_ips").getContext("2d");
+        if (charts["top_ips"]) {
+          charts["top_ips"].destroy();
+          delete charts["top_ips"];
+        }
+        return;
+      }
+      
+      const labels = topIps.map(item => item.ip);
+      const counts = topIps.map(item => item.count);
+      
+      const ctx = document.getElementById("chart_top_ips").getContext("2d");
+      
+      // Use consistent color scheme
+      const azureBlue = { bg: 'rgba(0, 115, 187, 0.8)', border: 'rgba(0, 115, 187, 1)' };
+      
+      const chartData = {
+        labels: labels,
+        datasets: [{
+          label: "Requests",
+          data: counts,
+          backgroundColor: azureBlue.bg,
+          borderColor: azureBlue.border,
+          borderWidth: 2
+        }]
+      };
+      
+      if (charts["top_ips"]) {
+        charts["top_ips"].data = chartData;
+        charts["top_ips"].update();
+      } else {
+        charts["top_ips"] = new Chart(ctx, {
+          type: "bar",
+          data: chartData,
+          options: {
+            responsive: true,
+            interaction: { mode: "nearest", intersect: false },
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label: (context) => `${context.label}: ${numberToHuman(context.parsed.y)} requests`
+                }
+              },
+              zoom: {
+                zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+                pan: { enabled: true, mode: "x" }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  callback: (value) => numberToHuman(value)
+                }
+              }
+            }
+          }
+        });
+      }
+      
+      setMeta("top_ipsMeta", `Top ${topIps.length} IPs (from recent logs)`);
+    } catch (e) {
+      console.error("Error rendering top IPs chart:", e);
+      setMeta("top_ipsMeta", "Error loading");
+    }
+  }
+
   // =========================
   // Data load
   // =========================
@@ -1300,7 +1383,11 @@ Examples:
         renderChart("errors", "chart_errors", [], b, hours);
         renderChart("bandwidth", "chart_bandwidth", [], b, hours);
         renderChart("unique_ips", "chart_unique_ips", [], b, hours);
-        ipBarImg.src = "";
+        // Clear top IPs chart
+        if (charts["top_ips"]) {
+          charts["top_ips"].destroy();
+          delete charts["top_ips"];
+        }
         setMeta("storageMeta", "—");
         setMeta("requestsMeta", "—");
         setMeta("errorsMeta", "—");
@@ -1333,10 +1420,8 @@ Examples:
       renderChart("unique_ips", "chart_unique_ips", points, b, hours);
       setMeta("unique_ipsMeta", `Latest: ${numberToHuman(lastReq.unique_ips || 0)}`);
 
-      // Top IPs image (server renders)
-      const url = `${BASE_URL}/plots/top-ips.png?source_bucket=${encodeURIComponent(b)}&limit=20&_=${Date.now()}`;
-      ipBarImg.src = url;
-      setMeta("top_ipsMeta", "Top 20 (from recent logs)");
+      // Top IPs chart (client-side rendering)
+      await renderTopIpsChart(b);
 
       // Threshold alerts
       checkThresholdAlert(b, points);

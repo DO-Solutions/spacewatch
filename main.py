@@ -134,7 +134,16 @@ SCHEDULER_LEADER_ID = os.getenv("SCHEDULER_LEADER_ID", "").strip()
 
 
 if not all([DO_AGENT_URL, DO_AGENT_KEY]):
-    raise RuntimeError("Missing required env vars: DO_AGENT_URL, DO_AGENT_KEY")
+    print("\n" + "=" * 70)
+    print("❌ CONFIGURATION ERROR")
+    print("=" * 70)
+    print("\nMissing required environment variables: DO_AGENT_URL, DO_AGENT_KEY")
+    print("\nTo configure SpaceWatch, please run the interactive setup:")
+    print("  python setup.py")
+    print("\nOr manually create a .env file with the required variables.")
+    print("See sample.env for an example configuration.")
+    print("=" * 70 + "\n")
+    raise RuntimeError("Missing required configuration")
 
 
 # ============================================================

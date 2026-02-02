@@ -311,28 +311,28 @@
       white-space: nowrap;
     }
 
-    /* Agent Panel Sliding from Bottom */
+    /* Agent Panel Sliding from Bottom Right */
     .agent-panel {
       position: fixed;
-      bottom: -100vh;
-      left: 50%;
-      transform: translateX(-50%);
+      bottom: 0;
+      right: 24px;
+      transform: translateY(100%);
       width: 90%;
-      max-width: 650px;
-      height: 500px;
+      max-width: 400px;
+      height: 550px;
       background: var(--bg);
       border: 1px solid var(--border);
       border-bottom: none;
       border-radius: 12px 12px 0 0;
       box-shadow: 0 -4px 20px rgba(0,0,0,.15);
       z-index: 999;
-      transition: bottom 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
     .agent-panel.open {
-      bottom: 20px;
+      transform: translateY(0);
     }
 
     .agent-header {
@@ -415,13 +415,11 @@
     /* Mobile Responsive */
     @media (max-width: 768px) {
       .agent-panel {
-        width: 95%;
+        width: 100%;
         max-width: 100%;
         height: 450px;
+        right: 0;
         border-radius: 16px 16px 0 0;
-      }
-      .agent-panel.open {
-        bottom: 10px;
       }
       .agent-fab {
         bottom: 16px;

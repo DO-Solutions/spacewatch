@@ -1406,6 +1406,54 @@ async def startup_scheduler():
         # The scheduler would need per-tenant credentials to work, which we don't have globally
         return
 
+    async def loop():
+        while True:
+            STATS["scheduler_runs"] += 1
+            try:
+                # Priority order:
+                # 1) Explicit SCHEDULER_SOURCE_BUCKETS (doesn't require list_buckets)
+                # 2) Bucket cache (list_buckets OR seeded known buckets)
+                # 3) Discover from existing snapshots
+                buckets = list(SCHEDULER_SOURCE_BUCKETS)
+                if not buckets:
+                    buckets = sorted(list(refresh_bucket_cache()))
+                if not buckets:
+                    ms = metrics_sources_internal(hours=720)
+                    buckets = ms.get("sources") or []
+
+                for b in buckets:
+                    if ACCESS_LOGS_BUCKET and b == ACCESS_LOGS_BUCKET:
+                        continue
+                    try:
+                        run_metrics_snapshot(b, "")
+                        STATS["scheduler_snapshots_ok"] += 1
+                        logger.info(f"Metrics snapshot completed for bucket: {b}")
+                    except Exception as e:
+                        STATS["scheduler_snapshots_err"] += 1
+                        logger.error(f"Metrics snapshot failed for bucket {b}: {e}")
+                        traceback.print_exc()
+            except Exception as e:
+                STATS["scheduler_snapshots_err"] += 1
+                logger.error(f"Scheduler error: {e}")
+                traceback.print_exc()
+                buckets = []
+
+            for b in buckets:
+                if ACCESS_LOGS_BUCKET and b == ACCESS_LOGS_BUCKET:
+                    continue
+                try:
+                    run_metrics_snapshot(b, "")
+                    STATS["scheduler_snapshots_ok"] += 1
+                    logger.info(f"Metrics snapshot completed for bucket: {b}")
+                except Exception as e:
+                    STATS["scheduler_snapshots_err"] += 1
+                    logger.error(f"Metrics snapshot failed for bucket {b}: {e}")
+                    traceback.print_exc()
+
+            await asyncio.sleep(max(60, int(SNAPSHOT_EVERY_SEC)))
+
+    asyncio.create_task(loop())
+
 
 # ============================================================
 # DO AGENT CALL

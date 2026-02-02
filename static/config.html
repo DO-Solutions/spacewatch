@@ -240,27 +240,6 @@
       </div>
 
       <form id="configForm">
-        <!-- Application Configuration -->
-        <div class="form-section">
-          <div class="section-title">Application Settings</div>
-          <div class="section-description">
-            Optional application configuration.
-          </div>
-
-          <div class="form-group">
-            <label for="appApiKey">
-              Application API Key
-              <span class="label-description">Optional - only required if the server has APP_API_KEY configured</span>
-            </label>
-            <input 
-              type="password" 
-              id="appApiKey" 
-              name="appApiKey" 
-              placeholder="Leave empty if not configured on server"
-            />
-          </div>
-        </div>
-
         <!-- DigitalOcean Spaces Credentials -->
         <div class="form-section">
           <div class="section-title">DigitalOcean Spaces Credentials</div>
@@ -401,7 +380,7 @@
     // Load any existing configuration from sessionStorage
     function loadExistingConfig() {
       const fields = [
-        'appApiKey', 'spacesKey', 'spacesSecret',
+        'spacesKey', 'spacesSecret',
         'spacesRegion', 'spacesEndpoint', 'logBucket', 'logPrefix', 
         'metricsBucket', 'metricsPrefix'
       ];
@@ -416,7 +395,6 @@
 
     // Load sample values for testing
     function loadSampleValues() {
-      document.getElementById('appApiKey').value = 'devkey';
       document.getElementById('spacesKey').value = 'DO00XXXXXXXXXXXXX';
       document.getElementById('spacesSecret').value = 'your_secret_key_here';
       document.getElementById('spacesRegion').value = 'sgp1';
@@ -436,7 +414,6 @@
 
       // Get form values
       const config = {
-        appApiKey: document.getElementById('appApiKey').value.trim(),
         spacesKey: document.getElementById('spacesKey').value.trim(),
         spacesSecret: document.getElementById('spacesSecret').value.trim(),
         spacesRegion: document.getElementById('spacesRegion').value.trim() || 'sgp1',

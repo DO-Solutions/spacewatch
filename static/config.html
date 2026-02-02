@@ -338,13 +338,13 @@
           <div class="form-group">
             <label for="logBucket">
               Access Logs Bucket
-              <span class="label-description">Bucket name where access logs are stored</span>
+              <span class="label-description">Bucket name where access logs are stored. If you haven't enabled logs yet, <a href="https://docs.digitalocean.com/products/spaces/how-to/access-logs/" target="_blank" rel="noopener noreferrer" style="color: var(--doBlue); text-decoration: underline;">follow these instructions</a>.</span>
             </label>
             <input 
               type="text" 
               id="logBucket" 
               name="logBucket" 
-              placeholder="my-access-logs"
+              placeholder="example-access-logs"
             />
           </div>
 
@@ -370,7 +370,7 @@
               type="text" 
               id="metricsBucket" 
               name="metricsBucket" 
-              placeholder="my-metrics"
+              placeholder="example-metrics"
             />
           </div>
 
@@ -421,9 +421,9 @@
       document.getElementById('spacesSecret').value = 'your_secret_key_here';
       document.getElementById('spacesRegion').value = 'sgp1';
       document.getElementById('spacesEndpoint').value = 'https://sgp1.digitaloceanspaces.com';
-      document.getElementById('logBucket').value = 'my-access-logs';
+      document.getElementById('logBucket').value = 'example-access-logs';
       document.getElementById('logPrefix').value = 'spaces-logs/';
-      document.getElementById('metricsBucket').value = 'my-metrics';
+      document.getElementById('metricsBucket').value = 'example-metrics';
       document.getElementById('metricsPrefix').value = 'spacewatch-metrics/';
     }
 
